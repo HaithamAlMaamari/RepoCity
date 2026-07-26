@@ -44,6 +44,8 @@ Browser-audit tooling is project-scoped and restricted to isolated profiles and 
 - Never put a GitHub token in a `VITE_*` environment variable or any browser bundle.
 - The browser calls only the same-origin RepoCity API; GitHub credentials remain Worker secrets.
 - Successful repository results contain a proven complete tree and identify whether files were sampled for rendering.
+- Canonical share URLs pin the immutable commit and a presentation `seed`; the same pair reproduces procedural stars, traffic, and particles.
+- The presentation seed is separate from the Worker-controlled sampling seed and accepts 1-64 letters, numbers, underscores, or hyphens.
 - GitHub's recursive tree API can truncate responses above 100,000 entries or 7 MB.
 - Treat repository names, paths, API responses, and URL state as untrusted data.
 

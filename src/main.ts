@@ -25,6 +25,8 @@ import { buildDistrictRects, districtFootprint } from './city/districts';
 import { languageColor, languageDisplayName } from './city/palette';
 import { createFlythrough } from './core/camera';
 import type { Flythrough } from './core/camera';
+import { createSceneRandom } from './core/random';
+import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
 import {
   buildSky, buildAtmosphere, buildStreetNetwork,
   buildTraffic, buildFlyingTraffic, buildEmbers, buildBillboards,
@@ -82,6 +84,7 @@ let flythrough: Flythrough | null = null;
 let activeResult: FetchResult | null = null;
 let activeLoadController: AbortController | null = null;
 let loadSequence = 0;
+let activeSceneSeed = DEFAULT_SCENE_SEED;
 
 /* ═══ Interaction state ═════════════════════════════════ */
 const raycaster = new THREE.Raycaster();
@@ -125,8 +128,8 @@ async function init(): Promise<void> {
   cyanRim.position.set(-120, 60, 90);
   scene.add(cyanRim);
 
-  /* sky */
-  sky = buildSky();
+  /* deterministic backdrop while repository identity is unresolved */
+  sky = buildSky(createSceneRandom('repocity/loading', 'unresolved', DEFAULT_SCENE_SEED, 'sky'));
   scene.add(sky.group);
 
   /* camera */
@@ -200,9 +203,9 @@ async function init(): Promise<void> {
   renderer.setAnimationLoop(animate);
   setStatus('ready.');
 
-  const initial = parseHashState() ?? { repo: repoInput.value };
+  const initial = parseSceneHash(window.location.hash) ?? { repo: repoInput.value, seed: DEFAULT_SCENE_SEED };
   repoInput.value = initial.repo;
-  await loadRepo(initial.repo, initial.commit, 'replace');
+  await loadRepo(initial.repo, initial.commit, initial.seed, 'replace');
 }
 
 /* ═══ Repo loading ══════════════════════════════════════ */
@@ -218,13 +221,15 @@ async function handleGo(): Promise<void> {
     setStatus('format: owner/repo', true);
     return;
   }
-  await loadRepo(repo, undefined, 'push');
+  await loadRepo(repo, undefined, DEFAULT_SCENE_SEED, 'push');
 }
 
 async function loadRepo(
   repo: string,
   commit?: string,
+  sceneSeed = DEFAULT_SCENE_SEED,
   historyMode: 'push' | 'replace' | 'none' = 'none',
+  resolvedResult?: FetchResult,
 ): Promise<void> {
   const [owner, repoName] = repo.split('/');
   if (!owner || !repoName) return;
@@ -240,8 +245,8 @@ async function loadRepo(
   loadingEl.classList.add('visible');
 
   try {
-    setStatus(`fetching ${repo}…`, false, true);
-    const result = await fetchRepoTree({ owner, repo: repoName, commit, maxFiles: 5000, signal: controller.signal });
+    setStatus(resolvedResult ? `rebuilding ${repo}…` : `fetching ${repo}…`, false, true);
+    const result = resolvedResult ?? await fetchRepoTree({ owner, repo: repoName, commit, maxFiles: 5000, signal: controller.signal });
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     setStatus(`building city · ${result.selection.returnedFiles.toLocaleString()} files`, false, true);
@@ -251,6 +256,10 @@ async function loadRepo(
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     teardown();
+
+    const sceneIdentity = [result.repository.fullName, result.revision.commitSha, sceneSeed] as const;
+    sky = buildSky(createSceneRandom(...sceneIdentity, 'sky'));
+    scene.add(sky.group);
 
     /* ── buildings ── */
     cityData = buildCity(cells);
@@ -276,20 +285,20 @@ async function loadRepo(
     cityRoot.add(streetNet.group);
 
     /* ── ground traffic ── */
-    traffic = buildTraffic(streetNet.streets);
+    traffic = buildTraffic(streetNet.streets, createSceneRandom(...sceneIdentity, 'ground-traffic'));
     cityRoot.add(traffic.mesh);
 
     scene.add(cityRoot);
 
     /* ── flying traffic (world space, city is centered) ── */
-    flying = buildFlyingTraffic(citySize);
+    flying = buildFlyingTraffic(citySize, createSceneRandom(...sceneIdentity, 'flying-traffic'));
     scene.add(flying.mesh);
 
     /* ── atmosphere + particles + billboards ── */
     atmosphere = buildAtmosphere(citySize, cityData.maxHeight);
     scene.add(atmosphere.group);
 
-    embers = buildEmbers(citySize);
+    embers = buildEmbers(citySize, createSceneRandom(...sceneIdentity, 'embers'));
     scene.add(embers.points);
 
     const billboardBlocks: BillboardBlock[] = districts.map((rect) => {
@@ -333,8 +342,9 @@ async function loadRepo(
     controls.enabled = false;
 
     activeResult = result;
+    activeSceneSeed = sceneSeed;
     repoInput.value = result.repository.fullName;
-    updateHash(result, historyMode);
+    updateHash(result, sceneSeed, historyMode);
     updateStats(result, cityData.buildings);
     sidebarEl.classList.add('visible');
     captureBtn.disabled = false;
@@ -360,32 +370,21 @@ async function loadRepo(
 }
 
 function handleHashChange(): void {
-  const state = parseHashState();
+  const state = parseSceneHash(window.location.hash);
   if (!state) return;
-  if (activeResult?.repository.fullName === state.repo && activeResult.revision.commitSha === state.commit) return;
+  const sameRevision = activeResult?.repository.fullName === state.repo && activeResult.revision.commitSha === state.commit;
+  if (sameRevision && activeSceneSeed === state.seed) return;
   repoInput.value = state.repo;
-  void loadRepo(state.repo, state.commit, 'none');
+  void loadRepo(state.repo, state.commit, state.seed, 'none', sameRevision ? activeResult ?? undefined : undefined);
 }
 
-function parseHashState(): { repo: string; commit?: string } | null {
-  const raw = window.location.hash.slice(1);
-  if (!raw) return null;
-  if (!raw.includes('=')) return raw.includes('/') ? { repo: raw } : null;
-
-  const params = new URLSearchParams(raw);
-  const repo = params.get('repo');
-  const commit = params.get('commit') ?? undefined;
-  if (!repo || !repo.includes('/')) return null;
-  if (commit && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(commit)) return null;
-  return { repo, commit: commit?.toLowerCase() };
-}
-
-function updateHash(result: FetchResult, mode: 'push' | 'replace' | 'none'): void {
+function updateHash(result: FetchResult, sceneSeed: string, mode: 'push' | 'replace' | 'none'): void {
   if (mode === 'none') return;
-  const hash = new URLSearchParams({
+  const hash = serializeSceneHash({
     repo: result.repository.fullName,
     commit: result.revision.commitSha,
-  }).toString();
+    seed: sceneSeed,
+  });
   const url = `${window.location.pathname}${window.location.search}#${hash}`;
   if (mode === 'push') history.pushState(null, '', url);
   else history.replaceState(null, '', url);
@@ -403,6 +402,7 @@ function teardown(): void {
   if (embers) { scene.remove(embers.points); embers.dispose(); embers = null; }
   if (billboards) { scene.remove(billboards.group); billboards.dispose(); billboards = null; }
   if (atmosphere) { scene.remove(atmosphere.group); atmosphere.dispose(); atmosphere = null; }
+  if (sky) { scene.remove(sky.group); sky.dispose(); sky = null; }
   setHovered(-1);
   setSelected(-1);
   hideInfo();
@@ -607,7 +607,7 @@ async function capturePoster(): Promise<void> {
     ctx.font = '500 18px "JetBrains Mono", monospace';
     const revision = activeResult?.revision.commitSha.slice(0, 12) ?? 'unknown';
     const coverage = activeResult?.coverage.selection === 'sampled' ? 'sampled' : 'complete';
-    ctx.fillText(`${cityData?.buildings.length ?? 0} buildings · ${coverage} · ${revision}`, 80, H - 110);
+    ctx.fillText(`${cityData?.buildings.length ?? 0} buildings · ${coverage} · ${revision} · seed ${activeSceneSeed}`, 80, H - 110);
 
     out.toBlob((blob) => {
       if (!blob) {
@@ -617,7 +617,7 @@ async function capturePoster(): Promise<void> {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `repo-city-${posterRepo.replace(/\//g, '-')}-${revision}.png`;
+      a.download = `repo-city-${posterRepo.replace(/\//g, '-')}-${revision}-seed-${activeSceneSeed}.png`;
       a.click();
       URL.revokeObjectURL(url);
       setStatus('poster downloaded.');

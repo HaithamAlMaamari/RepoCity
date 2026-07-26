@@ -4,6 +4,7 @@
  */
 
 import * as THREE from 'three';
+import type { RandomSource } from '../core/random';
 import { makeRadialGlow } from './textures';
 
 export interface Particles {
@@ -12,18 +13,18 @@ export interface Particles {
   dispose(): void;
 }
 
-export function buildEmbers(citySize: number, count = 250): Particles {
+export function buildEmbers(citySize: number, random: RandomSource, count = 250): Particles {
   const range = citySize * 0.7;
   const pos = new Float32Array(count * 3);
   const col = new Float32Array(count * 3);
   const speed = new Float32Array(count);
 
   for (let i = 0; i < count; i++) {
-    pos[i * 3] = (Math.random() - 0.5) * range * 2;
-    pos[i * 3 + 1] = Math.random() * 70;
-    pos[i * 3 + 2] = (Math.random() - 0.5) * range * 2;
-    speed[i] = 0.8 + Math.random() * 2.0;
-    const magenta = Math.random() < 0.35;
+    pos[i * 3] = (random() - 0.5) * range * 2;
+    pos[i * 3 + 1] = random() * 70;
+    pos[i * 3 + 2] = (random() - 0.5) * range * 2;
+    speed[i] = 0.8 + random() * 2.0;
+    const magenta = random() < 0.35;
     if (magenta) { col[i * 3] = 0.9; col[i * 3 + 1] = 0.25; col[i * 3 + 2] = 0.6; }
     else { col[i * 3] = 0.25; col[i * 3 + 1] = 0.65; col[i * 3 + 2] = 0.95; }
   }

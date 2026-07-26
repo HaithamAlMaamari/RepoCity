@@ -1,11 +1,12 @@
 /**
  * flying-traffic.ts — aerial vehicles in ORGANIZED sky-lane corridors.
  *
- * Not random: each corridor is an axis-aligned band at a fixed altitude
- * with one direction of travel. Reads as structured air traffic.
+ * Each corridor is an axis-aligned band at a fixed altitude with one
+ * direction of travel. Seeded variation keeps the traffic reproducible.
  */
 
 import * as THREE from 'three';
+import type { RandomSource } from '../core/random';
 import { makeStreak } from './textures';
 
 export interface FlyingTraffic {
@@ -29,7 +30,7 @@ const TINTS: [number, number, number][] = [
   [0.92, 0.52, 0.18],
 ];
 
-export function buildFlyingTraffic(citySize: number, desiredCount = 100): FlyingTraffic {
+export function buildFlyingTraffic(citySize: number, random: RandomSource, desiredCount = 100): FlyingTraffic {
   const tex = makeStreak();
   const geo = new THREE.PlaneGeometry(12, 0.46);
   geo.rotateX(-Math.PI / 2);
@@ -75,22 +76,22 @@ export function buildFlyingTraffic(citySize: number, desiredCount = 100): Flying
   const cars: AirCar[] = [];
   for (let i = 0; i < desiredCount; i++) {
     const co = corridors[i % corridors.length];
-    const laneIdx = Math.floor(Math.random() * co.lanes);
+    const laneIdx = Math.floor(random() * co.lanes);
     const lane = co.center + (laneIdx - (co.lanes - 1) / 2) * 4.5;
-    const emergency = Math.random() < 0.02;
+    const emergency = random() < 0.02;
     cars.push({
       axis: co.axis,
-      travel: -reach + Math.random() * reach * 2,
+      travel: -reach + random() * reach * 2,
       reach,
       lane,
-      y: co.y0 + Math.random() * (co.y1 - co.y0),
-      speed: co.dir * (20 + Math.random() * 16),
-      len: 0.8 + Math.random() * 0.5,
-      pulseRate: emergency ? 5 + Math.random() * 3 : 0,
-      pulseOffset: Math.random() * Math.PI * 2,
+      y: co.y0 + random() * (co.y1 - co.y0),
+      speed: co.dir * (20 + random() * 16),
+      len: 0.8 + random() * 0.5,
+      pulseRate: emergency ? 5 + random() * 3 : 0,
+      pulseOffset: random() * Math.PI * 2,
       color: emergency
-        ? (Math.random() < 0.5 ? [1.0, 0.12, 0.24] : [0.12, 0.62, 1.0])
-        : TINTS[Math.floor(Math.random() * TINTS.length)],
+        ? (random() < 0.5 ? [1.0, 0.12, 0.24] : [0.12, 0.62, 1.0])
+        : TINTS[Math.floor(random() * TINTS.length)],
     });
   }
 
@@ -145,6 +146,8 @@ export function buildFlyingTraffic(citySize: number, desiredCount = 100): Flying
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     if (podMesh.instanceColor) podMesh.instanceColor.needsUpdate = true;
   };
+
+  update(0);
 
   return {
     mesh, update,

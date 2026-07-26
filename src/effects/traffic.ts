@@ -7,6 +7,7 @@
  */
 
 import * as THREE from 'three';
+import type { RandomSource } from '../core/random';
 import type { StreetSegment } from '../types';
 import { makeStreak } from './textures';
 
@@ -32,7 +33,7 @@ const TINTS: [number, number, number][] = [
   [0.86, 0.52, 0.18],
 ];
 
-export function buildTraffic(streets: StreetSegment[], desiredCount = 240): TrafficStreaks {
+export function buildTraffic(streets: StreetSegment[], random: RandomSource, desiredCount = 240): TrafficStreaks {
   if (streets.length === 0) {
     const g = new THREE.PlaneGeometry(1, 1);
     const m = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
@@ -81,20 +82,20 @@ export function buildTraffic(streets: StreetSegment[], desiredCount = 240): Traf
       travelMin = s.z1; travelMax = s.z2;
       laneMin = s.x1 - s.width / 2 + 0.25; laneMax = s.x1 + s.width / 2 - 0.25;
     }
-    const emergency = Math.random() < 0.04;
+    const emergency = random() < 0.04;
     cars.push({
       axis: s.axis,
-      travel: travelMin + Math.random() * (travelMax - travelMin),
+      travel: travelMin + random() * (travelMax - travelMin),
       travelMin, travelMax,
-      lane: laneMin + Math.random() * Math.max(0.01, laneMax - laneMin),
-      speed: (Math.random() < 0.5 ? 1 : -1) * (7 + Math.random() * 16),
-      len: 0.7 + Math.random() * 0.6,
-      wid: 0.8 + Math.random() * 0.4,
-      pulseRate: emergency ? 5 + Math.random() * 4 : 0,
-      pulseOffset: Math.random() * Math.PI * 2,
+      lane: laneMin + random() * Math.max(0.01, laneMax - laneMin),
+      speed: (random() < 0.5 ? 1 : -1) * (7 + random() * 16),
+      len: 0.7 + random() * 0.6,
+      wid: 0.8 + random() * 0.4,
+      pulseRate: emergency ? 5 + random() * 4 : 0,
+      pulseOffset: random() * Math.PI * 2,
       color: emergency
-        ? (Math.random() < 0.5 ? [1.0, 0.12, 0.24] : [0.12, 0.62, 1.0])
-        : TINTS[Math.floor(Math.random() * TINTS.length)],
+        ? (random() < 0.5 ? [1.0, 0.12, 0.24] : [0.12, 0.62, 1.0])
+        : TINTS[Math.floor(random() * TINTS.length)],
     });
   }
 
@@ -149,6 +150,8 @@ export function buildTraffic(streets: StreetSegment[], desiredCount = 240): Traf
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     if (podMesh.instanceColor) podMesh.instanceColor.needsUpdate = true;
   };
+
+  update(0);
 
   return {
     mesh, update,

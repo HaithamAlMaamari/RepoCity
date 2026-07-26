@@ -3,6 +3,7 @@
  */
 
 import * as THREE from 'three';
+import type { RandomSource } from '../core/random';
 import { makeRadialGlow } from './textures';
 
 export interface Sky {
@@ -11,7 +12,7 @@ export interface Sky {
   dispose(): void;
 }
 
-export function buildSky(): Sky {
+export function buildSky(random: RandomSource): Sky {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
 
@@ -55,14 +56,14 @@ export function buildSky(): Sky {
   const col = new Float32Array(starCount * 3);
   for (let i = 0; i < starCount; i++) {
     // random point on upper hemisphere shell
-    const theta = Math.random() * Math.PI * 2;
-    const phi = Math.acos(0.25 + Math.random() * 0.75); // bias high
+    const theta = random() * Math.PI * 2;
+    const phi = Math.acos(0.25 + random() * 0.75); // bias high
     const r = 1600;
     pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
     pos[i * 3 + 1] = r * Math.cos(phi);
     pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-    const w = 0.5 + Math.random() * 0.5;
-    const blue = Math.random() < 0.3;
+    const w = 0.5 + random() * 0.5;
+    const blue = random() < 0.3;
     col[i * 3] = w * (blue ? 0.8 : 1.0);
     col[i * 3 + 1] = w * 0.9;
     col[i * 3 + 2] = w * (blue ? 1.0 : 0.85);
