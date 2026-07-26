@@ -27,6 +27,8 @@ import { createFlythrough } from './core/camera';
 import type { Flythrough } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
+import { buildExplorerModel, visibleExplorerNodes } from './explore/explorer-model';
+import type { ExplorerModel, ExplorerNode } from './explore/explorer-model';
 import {
   buildSky, buildAtmosphere, buildStreetNetwork,
   buildTraffic, buildFlyingTraffic, buildEmbers, buildBillboards,
@@ -62,6 +64,18 @@ const infoFilenameEl = document.getElementById('info-filename')!;
 const infoPathEl = document.getElementById('info-path')!;
 const infoSizeEl = document.getElementById('info-size')!;
 const infoLangEl = document.getElementById('info-lang')!;
+const explorerPanelEl = document.getElementById('explore-panel') as HTMLElement;
+const explorerToggleEl = document.getElementById('explorer-toggle') as HTMLButtonElement;
+const explorerCoverageEl = document.getElementById('explorer-coverage')!;
+const repoTreeEl = document.getElementById('repo-tree') as HTMLUListElement;
+const treeEmptyEl = document.getElementById('tree-empty') as HTMLParagraphElement;
+const selectionStatusEl = document.getElementById('selection-status')!;
+const focusBuildingEl = document.getElementById('focus-building') as HTMLButtonElement;
+const copyPathEl = document.getElementById('copy-path') as HTMLButtonElement;
+const openFileEl = document.getElementById('open-file') as HTMLAnchorElement;
+const mobileExplorerMedia = window.matchMedia('(max-width: 720px)');
+let explorerUserToggled = false;
+syncExplorerForViewport();
 
 /* ═══ Renderer state ════════════════════════════════════ */
 let renderer: THREE.WebGLRenderer;
@@ -85,6 +99,12 @@ let activeResult: FetchResult | null = null;
 let activeLoadController: AbortController | null = null;
 let loadSequence = 0;
 let activeSceneSeed = DEFAULT_SCENE_SEED;
+let explorerModel: ExplorerModel | null = null;
+const expandedPaths = new Set<string>();
+let activeTreePath = '';
+let selectedBuildingId = -1;
+let cityOffsetX = 0;
+let cityOffsetZ = 0;
 
 /* ═══ Interaction state ═════════════════════════════════ */
 const raycaster = new THREE.Raycaster();
@@ -199,13 +219,19 @@ async function init(): Promise<void> {
   canvas.addEventListener('pointermove', handlePointerMove);
   canvas.addEventListener('click', handleClick);
   canvas.addEventListener('pointerleave', () => setHovered(-1));
+  explorerToggleEl.addEventListener('click', toggleExplorer);
+  mobileExplorerMedia.addEventListener('change', syncExplorerForViewport);
+  repoTreeEl.addEventListener('keydown', handleTreeKeydown);
+  repoTreeEl.addEventListener('click', handleTreeClick);
+  focusBuildingEl.addEventListener('click', focusSelectedBuilding);
+  copyPathEl.addEventListener('click', copySelectedPath);
 
   renderer.setAnimationLoop(animate);
   setStatus('ready.');
 
   const initial = parseSceneHash(window.location.hash) ?? { repo: repoInput.value, seed: DEFAULT_SCENE_SEED };
   repoInput.value = initial.repo;
-  await loadRepo(initial.repo, initial.commit, initial.seed, 'replace');
+  await loadRepo(initial.repo, initial.commit, initial.seed, initial.file, 'replace');
 }
 
 /* ═══ Repo loading ══════════════════════════════════════ */
@@ -221,13 +247,14 @@ async function handleGo(): Promise<void> {
     setStatus('format: owner/repo', true);
     return;
   }
-  await loadRepo(repo, undefined, DEFAULT_SCENE_SEED, 'push');
+  await loadRepo(repo, undefined, DEFAULT_SCENE_SEED, undefined, 'push');
 }
 
 async function loadRepo(
   repo: string,
   commit?: string,
   sceneSeed = DEFAULT_SCENE_SEED,
+  requestedFile?: string,
   historyMode: 'push' | 'replace' | 'none' = 'none',
   resolvedResult?: FetchResult,
 ): Promise<void> {
@@ -266,6 +293,8 @@ async function loadRepo(
     const b = cityData.bounds;
     const cx = (b.minX + b.maxX) / 2;
     const cz = (b.minZ + b.maxZ) / 2;
+    cityOffsetX = -cx;
+    cityOffsetZ = -cz;
     const citySize = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
 
     const cityRoot = new THREE.Group();
@@ -344,7 +373,10 @@ async function loadRepo(
     activeResult = result;
     activeSceneSeed = sceneSeed;
     repoInput.value = result.repository.fullName;
-    updateHash(result, sceneSeed, historyMode);
+    renderExplorer(result, cityData.buildings);
+    const requestedId = requestedFile ? explorerModel?.buildingIdByPath.get(requestedFile) : undefined;
+    if (requestedId !== undefined) selectBuilding(requestedId, { focusCamera: true, updateUrl: false, announce: false });
+    updateHash(result, sceneSeed, requestedId === undefined ? undefined : requestedFile, historyMode);
     updateStats(result, cityData.buildings);
     sidebarEl.classList.add('visible');
     captureBtn.disabled = false;
@@ -373,17 +405,26 @@ function handleHashChange(): void {
   const state = parseSceneHash(window.location.hash);
   if (!state) return;
   const sameRevision = activeResult?.repository.fullName === state.repo && activeResult.revision.commitSha === state.commit;
-  if (sameRevision && activeSceneSeed === state.seed) return;
+  if (sameRevision && activeSceneSeed === state.seed) {
+    const id = state.file ? explorerModel?.buildingIdByPath.get(state.file) : undefined;
+    if (id === undefined) {
+      clearSelection(true);
+      if (state.file) selectionStatusEl.textContent = 'The requested file is not rendered in this city.';
+    }
+    else if (id !== selectedBuildingId) selectBuilding(id, { focusCamera: true, updateUrl: false, announce: false });
+    return;
+  }
   repoInput.value = state.repo;
-  void loadRepo(state.repo, state.commit, state.seed, 'none', sameRevision ? activeResult ?? undefined : undefined);
+  void loadRepo(state.repo, state.commit, state.seed, state.file, state.commit ? 'none' : 'replace', sameRevision ? activeResult ?? undefined : undefined);
 }
 
-function updateHash(result: FetchResult, sceneSeed: string, mode: 'push' | 'replace' | 'none'): void {
+function updateHash(result: FetchResult, sceneSeed: string, file: string | undefined, mode: 'push' | 'replace' | 'none'): void {
   if (mode === 'none') return;
   const hash = serializeSceneHash({
     repo: result.repository.fullName,
     commit: result.revision.commitSha,
     seed: sceneSeed,
+    file,
   });
   const url = `${window.location.pathname}${window.location.search}#${hash}`;
   if (mode === 'push') history.pushState(null, '', url);
@@ -404,7 +445,12 @@ function teardown(): void {
   if (atmosphere) { scene.remove(atmosphere.group); atmosphere.dispose(); atmosphere = null; }
   if (sky) { scene.remove(sky.group); sky.dispose(); sky = null; }
   setHovered(-1);
-  setSelected(-1);
+  selectedBuildingId = -1;
+  explorerModel = null;
+  expandedPaths.clear();
+  repoTreeEl.replaceChildren();
+  explorerCoverageEl.textContent = 'Load a repository to inspect its rendered files.';
+  treeEmptyEl.hidden = true;
   hideInfo();
 }
 
@@ -470,17 +516,35 @@ function handleClick(e: MouseEvent): void {
   if (e.button !== 0) return;
   const id = pick(e);
   if (id >= 0 && cityData) {
-    setSelected(id);
-    showInfo(cityData.buildings[id]);
+    selectBuilding(id, { focusCamera: false, updateUrl: true, announce: true });
   } else {
-    setSelected(-1);
-    hideInfo();
+    clearSelection(true);
   }
   lastInteraction = clock.elapsedTime;
 }
 
 function setHovered(id: number): void { hoveredId = id; cityData?.setHovered(id); }
-function setSelected(id: number): void { cityData?.setSelected(id); }
+
+function selectBuilding(id: number, options: { focusCamera: boolean; updateUrl: boolean; announce: boolean }): void {
+  const building = cityData?.buildings[id];
+  if (!building) return;
+  selectedBuildingId = id;
+  cityData?.setSelected(id);
+  showInfo(building);
+  revealTreePath(building.path);
+  updateTreeSelection();
+  if (options.focusCamera) focusSelectedBuilding();
+  if (options.updateUrl) replaceSelectionHash(building.path);
+  if (options.announce) selectionStatusEl.textContent = `Selected ${building.path}, ${languageDisplayName(building.language)}, ${formatSize(building.size)}.`;
+}
+
+function clearSelection(updateUrl: boolean): void {
+  selectedBuildingId = -1;
+  cityData?.setSelected(-1);
+  hideInfo();
+  updateTreeSelection();
+  if (updateUrl) replaceSelectionHash(undefined);
+}
 
 function showInfo(b: Building): void {
   const filename = b.path.split('/').pop() ?? b.path;
@@ -498,8 +562,199 @@ function showInfo(b: Building): void {
   infoLangEl.replaceChildren(swatch, document.createTextNode(languageDisplayName(lang)));
   (infoLangEl as HTMLElement).style.color = hex;
   infoEl.classList.add('visible');
+  infoEl.hidden = false;
+  openFileEl.href = activeResult
+    ? `${activeResult.repository.htmlUrl}/blob/${activeResult.revision.commitSha}/${b.path.split('/').map(encodeURIComponent).join('/')}`
+    : '#';
 }
-function hideInfo(): void { infoEl.classList.remove('visible'); }
+function hideInfo(): void { infoEl.classList.remove('visible'); infoEl.hidden = true; }
+
+function toggleExplorer(): void {
+  explorerUserToggled = true;
+  const open = explorerPanelEl.classList.toggle('open');
+  explorerToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+function syncExplorerForViewport(): void {
+  if (explorerUserToggled) return;
+  const open = !mobileExplorerMedia.matches;
+  explorerPanelEl.classList.toggle('open', open);
+  explorerToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+function renderExplorer(result: FetchResult, buildings: Building[]): void {
+  explorerModel = buildExplorerModel(result, buildings);
+  expandedPaths.clear();
+  activeTreePath = explorerModel.roots[0]?.path ?? '';
+  explorerCoverageEl.textContent = explorerModel.coverageText;
+  treeEmptyEl.hidden = buildings.length > 0;
+  renderExplorerTree();
+}
+
+function renderExplorerTree(): void {
+  repoTreeEl.replaceChildren();
+  if (!explorerModel) return;
+  const appendNodes = (parent: HTMLElement, nodes: readonly ExplorerNode[], level: number) => {
+    for (const node of nodes) {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'none');
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'tree-row';
+      row.setAttribute('role', 'treeitem');
+      row.setAttribute('aria-level', String(level));
+      if (node.type === 'file') row.setAttribute('aria-selected', String(node.buildingId === selectedBuildingId));
+      row.tabIndex = node.path === activeTreePath ? 0 : -1;
+      row.dataset.path = node.path;
+      if (node.buildingId !== undefined) row.dataset.buildingId = String(node.buildingId);
+      row.setAttribute('aria-label', node.type === 'file'
+        ? `${node.name}, ${languageDisplayName(node.language ?? 'unknown')}, ${formatSize(node.size)}`
+        : `${node.name}, folder, ${node.children.length} items`);
+      const icon = document.createElement('span');
+      icon.className = 'tree-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = node.type === 'directory' ? (expandedPaths.has(node.path) ? '−' : '+') : '▪';
+      const name = document.createElement('span');
+      name.className = 'tree-name';
+      name.textContent = node.name;
+      const meta = document.createElement('span');
+      meta.className = 'tree-meta';
+      meta.textContent = node.type === 'file' ? `${languageDisplayName(node.language ?? 'unknown')} · ${formatSize(node.size)}` : `${node.children.length}`;
+      row.append(icon, name, meta);
+      item.appendChild(row);
+      if (node.type === 'directory' && expandedPaths.has(node.path)) {
+        const group = document.createElement('ul');
+        group.setAttribute('role', 'group');
+        group.id = `tree-group-${encodeURIComponent(node.path)}`;
+        row.setAttribute('aria-expanded', 'true');
+        row.setAttribute('aria-owns', group.id);
+        appendNodes(group, node.children, level + 1);
+        item.appendChild(group);
+      } else if (node.type === 'directory') {
+        row.setAttribute('aria-expanded', 'false');
+      }
+      parent.appendChild(item);
+    }
+  };
+  appendNodes(repoTreeEl, explorerModel.roots, 1);
+}
+
+function handleTreeKeydown(event: KeyboardEvent): void {
+  if (!explorerModel) return;
+  const visible = visibleExplorerNodes(explorerModel.roots, expandedPaths);
+  let index = visible.findIndex((node) => node.path === activeTreePath);
+  if (index < 0) index = 0;
+  const node = visible[index];
+  if (!node) return;
+  let nextPath: string | undefined;
+  if (event.key === 'ArrowDown') nextPath = visible[Math.min(visible.length - 1, index + 1)]?.path;
+  else if (event.key === 'ArrowUp') nextPath = visible[Math.max(0, index - 1)]?.path;
+  else if (event.key === 'Home') nextPath = visible[0]?.path;
+  else if (event.key === 'End') nextPath = visible[visible.length - 1]?.path;
+  else if (event.key === 'ArrowRight' && node.type === 'directory') {
+    if (!expandedPaths.has(node.path)) { expandedPaths.add(node.path); renderExplorerTree(); focusActiveTreeItem(); }
+    else nextPath = node.children[0]?.path;
+  } else if (event.key === 'ArrowLeft') {
+    if (node.type === 'directory' && expandedPaths.has(node.path)) { expandedPaths.delete(node.path); renderExplorerTree(); focusActiveTreeItem(); }
+    else nextPath = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : undefined;
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    (event.target as HTMLElement).click();
+    event.preventDefault();
+    return;
+  } else return;
+  event.preventDefault();
+  if (nextPath !== undefined) {
+    moveTreeFocus(nextPath);
+    return;
+  }
+  focusActiveTreeItem();
+}
+
+function handleTreeClick(event: MouseEvent): void {
+  const row = (event.target as Element).closest<HTMLElement>('[role="treeitem"]');
+  if (!row || !explorerModel) return;
+  activeTreePath = row.dataset.path ?? '';
+  const node = visibleExplorerNodes(explorerModel.roots, expandedPaths).find((item) => item.path === activeTreePath);
+  if (!node) return;
+  if (node.type === 'directory') {
+    if (expandedPaths.has(node.path)) expandedPaths.delete(node.path); else expandedPaths.add(node.path);
+    renderExplorerTree();
+    focusActiveTreeItem();
+  } else if (node.buildingId !== undefined) {
+    selectBuilding(node.buildingId, { focusCamera: true, updateUrl: true, announce: true });
+    focusActiveTreeItem();
+  }
+}
+
+function moveTreeFocus(path: string): void {
+  const rows = [...repoTreeEl.querySelectorAll<HTMLButtonElement>('.tree-row')];
+  for (const row of rows) row.tabIndex = row.dataset.path === path ? 0 : -1;
+  activeTreePath = path;
+  rows.find((row) => row.dataset.path === path)?.focus();
+}
+
+function focusActiveTreeItem(): void {
+  const row = [...repoTreeEl.querySelectorAll<HTMLButtonElement>('.tree-row')].find((item) => item.dataset.path === activeTreePath);
+  row?.focus();
+}
+
+function revealTreePath(path: string): void {
+  const segments = path.split('/');
+  let changed = false;
+  for (let index = 1; index < segments.length; index++) {
+    const parent = segments.slice(0, index).join('/');
+    if (!expandedPaths.has(parent)) { expandedPaths.add(parent); changed = true; }
+  }
+  activeTreePath = path;
+  if (changed) renderExplorerTree();
+  const row = [...repoTreeEl.querySelectorAll<HTMLElement>('.tree-row')].find((item) => item.dataset.path === path);
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function updateTreeSelection(): void {
+  for (const row of repoTreeEl.querySelectorAll<HTMLElement>('[role="treeitem"]')) {
+    if (row.dataset.buildingId === undefined) row.removeAttribute('aria-selected');
+    else row.setAttribute('aria-selected', String(Number(row.dataset.buildingId) === selectedBuildingId));
+  }
+}
+
+function replaceSelectionHash(path: string | undefined): void {
+  if (!activeResult) return;
+  const hash = serializeSceneHash({
+    repo: activeResult.repository.fullName,
+    commit: activeResult.revision.commitSha,
+    seed: activeSceneSeed,
+    file: path,
+  });
+  history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${hash}`);
+}
+
+function focusSelectedBuilding(): void {
+  const building = cityData?.buildings[selectedBuildingId];
+  if (!building) return;
+  flythrough?.skip();
+  flythrough = null;
+  controls.enabled = true;
+  const target = new THREE.Vector3(building.position[0] + cityOffsetX, building.totalHeight * 0.45, building.position[2] + cityOffsetZ);
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  const distance = Math.max(22, building.totalHeight * 2.4, Math.max(building.scale[0], building.scale[2]) * 5);
+  controls.target.copy(target);
+  camera.position.copy(target).addScaledVector(direction.lengthSq() > 0 ? direction : new THREE.Vector3(1, 0.7, 1).normalize(), distance);
+  camera.lookAt(target);
+  controls.update();
+  lastInteraction = clock.elapsedTime;
+}
+
+async function copySelectedPath(): Promise<void> {
+  const path = cityData?.buildings[selectedBuildingId]?.path;
+  if (!path) return;
+  try {
+    await navigator.clipboard.writeText(path);
+    selectionStatusEl.textContent = `Copied ${path}.`;
+  } catch {
+    selectionStatusEl.textContent = 'Could not copy the selected path.';
+  }
+}
 
 /* ═══ Sidebar stats ═════════════════════════════════════ */
 function updateStats(result: FetchResult, buildings: Building[]): void {

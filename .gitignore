@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 test-results/
+playwright-report/
+blob-report/
+artifacts/
 .playwright-cli/
 
 .env
@@ -14,6 +17,14 @@ test-results/
 worker-configuration.d.ts
 
 *.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db
 Desktop.ini

@@ -26,6 +26,17 @@ describe('scene URL state', () => {
     expect(parseSceneHash(`#repo=octocat%2Frepo&commit=${COMMIT.toUpperCase()}&seed=0`)?.commit).toBe(COMMIT);
   });
 
+  it('round-trips an encoded selected file path', () => {
+    const hash = serializeSceneHash({ repo: 'octocat/repo', commit: COMMIT, seed: '0', file: 'src/a file & notes#.ts' });
+    expect(parseSceneHash(hash)?.file).toBe('src/a file & notes#.ts');
+  });
+
+  it('keeps parsing and serialization consistent for long repository paths', () => {
+    const file = `${'nested/'.repeat(160)}source.ts`;
+    const hash = serializeSceneHash({ repo: 'octocat/repo', commit: COMMIT, seed: '0', file });
+    expect(parseSceneHash(hash)?.file).toBe(file);
+  });
+
   it('defaults canonical seedless hashes without losing the immutable commit', () => {
     expect(parseSceneHash(`#repo=octocat%2Frepo&commit=${COMMIT}`)).toEqual({
       repo: 'octocat/repo',
@@ -47,6 +58,10 @@ describe('scene URL state', () => {
     '#repo=invalid-%2Frepo&seed=0',
     '#repo=invalid--owner%2Frepo&seed=0',
     '#repo=octocat%2Frepo%2Fextra&seed=0',
+    '#repo=octocat%2Frepo&seed=0&file=',
+    '#repo=octocat%2Frepo&seed=0&file=%2Fsecret',
+    '#repo=octocat%2Frepo&seed=0&file=src%2F..%2Fsecret',
+    '#repo=octocat%2Frepo&seed=0&file=src%5Csecret',
   ])('rejects invalid or ambiguous state: %s', (hash) => {
     expect(parseSceneHash(hash)).toBeNull();
   });

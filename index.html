@@ -139,6 +139,17 @@
         border-color: var(--accent);
         box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.12);
       }
+      :where(button, input, a, [role='treeitem']):focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px; height: 1px;
+        padding: 0; margin: -1px;
+        overflow: hidden; clip: rect(0, 0, 0, 0);
+        white-space: nowrap; border: 0;
+      }
       button {
         cursor: pointer;
         font-weight: 500;
@@ -355,26 +366,49 @@
       }
       .sidebar-actions button { flex: 1; }
 
-      /* Info panel (clicked building) */
-      #info {
+      /* City index: semantic map legend + rendered file registry */
+      #explore-panel {
         position: fixed;
-        bottom: 22px;
-        left: 22px;
-        max-width: 380px;
+        top: 110px;
+        right: 22px;
+        width: 360px;
+        max-height: calc(100dvh - 132px);
         background: var(--panel);
         border: 1px solid var(--panel-border);
         border-radius: 12px;
-        padding: 16px 18px;
         font-size: 12px;
         backdrop-filter: blur(14px);
-        opacity: 0;
-        transform: translateY(8px);
-        transition: opacity 0.3s, transform 0.3s;
-        pointer-events: none;
         z-index: 9;
         box-shadow: var(--shadow);
+        overflow: hidden;
       }
-      #info.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+      .index-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--panel-border); }
+      .index-kicker { color: var(--accent); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; }
+      .index-title { margin: 3px 0 0; font: italic 600 22px/1.1 'Fraunces', serif; }
+      #semantic-legend { padding: 12px 16px; border-bottom: 1px solid var(--panel-border); }
+      #semantic-legend dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; }
+      #semantic-legend dt { color: var(--ink); font-weight: 600; }
+      #semantic-legend dd { color: var(--dim); margin: 0; }
+      .legend-note { margin: 9px 0 0; color: var(--faint); font-size: 10px; line-height: 1.45; }
+      #explore-panel:not(.open) #explore-body { display: none; }
+      #explore-body { max-height: calc(100dvh - 345px); overflow: auto; overscroll-behavior: contain; }
+      .explorer-section { padding: 12px 10px 14px; max-height: min(48vh, 520px); overflow: auto; overscroll-behavior: contain; }
+      #explorer-coverage { color: var(--faint); font-size: 10px; line-height: 1.45; margin: 0 6px 10px; }
+      #repo-tree, #repo-tree ul { list-style: none; padding: 0; margin: 0; }
+      #repo-tree ul { padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.07); }
+      .tree-row {
+        width: 100%; min-height: 34px; display: grid; grid-template-columns: 16px minmax(0,1fr) auto;
+        align-items: center; gap: 7px; border: 0; border-radius: 6px; padding: 5px 7px;
+        background: transparent; color: var(--dim); text-align: left; font-size: 10.5px;
+      }
+      .tree-row:hover, .tree-row[aria-selected='true'] { background: rgba(255,179,71,0.10); color: var(--ink); }
+      .tree-row[aria-selected='true'] { box-shadow: inset 2px 0 var(--accent); }
+      .tree-icon { color: var(--accent); }
+      .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tree-meta { color: var(--faint); font-size: 9px; }
+      #tree-empty { color: var(--dim); padding: 12px; }
+      #info { border-top: 1px solid var(--panel-border); padding: 14px 16px; }
+      #info[hidden] { display: none; }
       #info-filename {
         font-weight: 600;
         font-size: 15px;
@@ -403,6 +437,9 @@
         text-transform: uppercase;
         letter-spacing: 0.08em;
       }
+      .selection-actions { display: flex; gap: 7px; margin-top: 12px; }
+      .selection-actions > * { min-height: 34px; flex: 1; display: inline-flex; align-items: center; justify-content: center; }
+      .selection-actions a { color: var(--accent); text-decoration: none; border: 1px solid var(--panel-border); border-radius: 7px; }
 
       /* Bottom-right help / hints */
       #hints {
@@ -509,13 +546,17 @@
         .input-wrap input { width: calc(100vw - 220px); min-width: 160px; }
         .presets { display: none; }
         #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 130px; }
-        #info { left: 12px; right: 12px; max-width: none; }
+        #explore-panel { top: auto; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-height: 58dvh; }
+        #semantic-legend { padding: 9px 14px; }
+        #semantic-legend dl { display: none; }
+        #explore-body { max-height: 43dvh; }
+        .tree-row { min-height: 44px; }
         #hints { display: none; }
       }
     </style>
   </head>
   <body>
-    <canvas id="stage" aria-label="Interactive repository city visualization"></canvas>
+    <canvas id="stage" aria-label="Interactive repository city visualization" aria-describedby="semantic-legend explorer-coverage"></canvas>
     <div class="grain"></div>
 
     <header>
@@ -530,6 +571,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         capture
       </button>
+      <button id="explorer-toggle" class="icon" aria-controls="explore-body" aria-expanded="true">city index</button>
       <div id="status" role="status" aria-live="polite">initializing…</div>
     </header>
 
@@ -573,14 +615,44 @@
       </div>
     </aside>
 
-    <div id="info">
-      <div id="info-filename">—</div>
-      <div id="info-path">—</div>
-      <div class="info-grid">
-        <div class="k">size</div><div id="info-size">—</div>
-        <div class="k">lang</div><div id="info-lang">—</div>
+    <aside id="explore-panel" class="open" aria-labelledby="explore-heading">
+      <div class="index-head">
+        <div class="index-kicker">survey desk / 01</div>
+        <h2 class="index-title" id="explore-heading">City index</h2>
       </div>
-    </div>
+      <section id="semantic-legend" aria-labelledby="legend-heading">
+        <h3 id="legend-heading" class="sr-only">How to read the city</h3>
+        <dl>
+          <dt>building</dt><dd>one rendered file</dd>
+          <dt>plot + height</dt><dd>file bytes, approximately and logarithmically scaled</dd>
+          <dt>color</dt><dd>detected file language</dd>
+          <dt>district</dt><dd>nested folder grouping</dd>
+        </dl>
+        <p class="legend-note">Traffic, stars, fog and particles are atmosphere, not repository activity.</p>
+      </section>
+      <div id="explore-body">
+        <nav class="explorer-section" aria-label="Rendered repository files">
+          <p id="explorer-coverage">Load a repository to inspect its rendered files.</p>
+          <p id="tree-help" class="sr-only">Use arrow keys to navigate, Right and Left to expand or collapse folders, and Enter or Space to select a file.</p>
+          <ul id="repo-tree" role="tree" aria-label="Rendered repository files" aria-describedby="tree-help explorer-coverage"></ul>
+          <p id="tree-empty" hidden>No files are rendered for this repository.</p>
+        </nav>
+        <section id="info" aria-labelledby="info-filename" aria-live="polite" hidden>
+          <h3 id="info-filename">—</h3>
+          <div id="info-path">—</div>
+          <div class="info-grid">
+            <div class="k">size</div><div id="info-size">—</div>
+            <div class="k">lang</div><div id="info-lang">—</div>
+          </div>
+          <div class="selection-actions">
+            <button id="focus-building">focus</button>
+            <button id="copy-path">copy path</button>
+            <a id="open-file" target="_blank" rel="noopener">GitHub ↗</a>
+          </div>
+        </section>
+      </div>
+    </aside>
+    <div id="selection-status" class="sr-only" role="status" aria-live="polite"></div>
 
     <div id="hints">
       <div class="hint-row"><kbd>drag</kbd> orbit · <kbd>scroll</kbd> zoom · <kbd>click</kbd> inspect</div>

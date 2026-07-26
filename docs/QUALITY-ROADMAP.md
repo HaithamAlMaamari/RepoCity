@@ -26,6 +26,7 @@ Completed evidence:
 - Worker transport tests now cover malformed and oversized bodies, bounded redirects, rate limits, retries, cancellation, timeout precedence, traversal budgets, and invalid trees; isolated Workerd tests cover bindings, request signals, streams, and Cache API MISS/HIT behavior.
 - The browser contract now rejects inconsistent identities, policies, modes, paths, hierarchies, counts, and language totals; traversal fixtures cover depth and entry boundaries, missing parents, duplicate paths, empty trees, and zero-byte files.
 - A formal threat model now records trust boundaries and residual risks; mandatory actor and global Cloudflare rate-limit bindings fail closed and are exercised with real Workerd counters.
+- Explore mode now includes a truthful persistent legend, accessible keyboard directory tree, synchronized canvas/file selection, camera focus, immutable GitHub links, path copy, rendered-coverage disclosure, shareable selected-file state, and a responsive mobile sheet.
 
 Still required before Phase 1 exits:
 
