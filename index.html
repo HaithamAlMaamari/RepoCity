@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>repo.city — github repos as 3d cities</title>
+    <meta name="description" content="Visualize any GitHub repository as a generative 3D city. Files become buildings, folders become districts." />
+    <meta property="og:title" content="repo.city — github repos as 3d cities" />
+    <meta property="og:description" content="Visualize any GitHub repository as a generative 3D city. Files become buildings, folders become districts." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="repo.city — github repos as 3d cities" />
+    <meta name="twitter:description" content="Visualize any GitHub repository as a generative 3D city." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;0,700;1,500;1,600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #0e0a1f;
+        --bg-2: #14102a;
+        --ink: #ece7dd;
+        --dim: #b6b1a4;
+        --faint: #6e6a5e;
+        --accent: #ffb347;
+        --accent-2: #ff2d8a;
+        --accent-3: #00d4ff;
+        --err: #ff6b6b;
+        --panel: rgba(18, 12, 34, 0.72);
+        --panel-solid: #14102a;
+        --panel-border: rgba(255, 255, 255, 0.08);
+        --panel-border-hot: rgba(255, 179, 71, 0.45);
+        --shadow: 0 12px 40px -16px rgba(0, 0, 0, 0.7);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+      ::selection { background: var(--accent); color: var(--bg); }
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+      #stage {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+
+      /* Subtle film-grain overlay */
+      .grain {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.06;
+        z-index: 50;
+        mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+      }
+
+      /* Header */
+      header {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        padding: 14px 22px 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        z-index: 10;
+        background: linear-gradient(to bottom, rgba(14,10,31,0.85), rgba(14,10,31,0));
+        pointer-events: none;
+      }
+      header > * { pointer-events: auto; }
+      .brand {
+        font-family: 'Fraunces', serif;
+        font-style: italic;
+        font-weight: 700;
+        font-size: 24px;
+        color: var(--accent);
+        letter-spacing: -0.01em;
+        line-height: 1;
+        margin-right: 6px;
+        text-shadow: 0 0 24px rgba(255, 179, 71, 0.35);
+        user-select: none;
+      }
+      .brand .dot { color: var(--ink); }
+      .brand .ver {
+        font-family: 'JetBrains Mono', monospace;
+        font-style: normal;
+        font-size: 9px;
+        color: var(--faint);
+        font-weight: 500;
+        margin-left: 4px;
+        vertical-align: super;
+      }
+
+      .input-wrap {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .input-wrap::before {
+        content: '';
+        position: absolute;
+        left: 10px;
+        width: 14px;
+        height: 14px;
+        background: currentColor;
+        color: var(--faint);
+        -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/></svg>") center/contain no-repeat;
+                mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/></svg>") center/contain no-repeat;
+        pointer-events: none;
+      }
+      input, button, select {
+        font: inherit;
+        color: inherit;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 7px;
+        padding: 8px 12px;
+        outline: none;
+        font-size: 13px;
+        backdrop-filter: blur(10px);
+        transition: border-color 0.15s, box-shadow 0.15s, background 0.15s, color 0.15s;
+      }
+      .input-wrap input { padding-left: 32px; width: 290px; }
+      input:focus, select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.12);
+      }
+      button {
+        cursor: pointer;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.10);
+      }
+      button:active:not(:disabled) { transform: translateY(1px); }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+      button.primary {
+        background: linear-gradient(180deg, rgba(255, 179, 71, 0.18), rgba(255, 179, 71, 0.08));
+        border-color: rgba(255, 179, 71, 0.45);
+        color: var(--accent);
+      }
+      button.primary:hover:not(:disabled) {
+        background: linear-gradient(180deg, rgba(255, 179, 71, 0.28), rgba(255, 179, 71, 0.14));
+        box-shadow: 0 0 24px rgba(255, 179, 71, 0.25);
+      }
+      button.icon {
+        padding: 8px 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      button.icon svg { width: 14px; height: 14px; }
+
+      #status {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--dim);
+        padding: 8px 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 7px;
+        backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #status::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        flex-shrink: 0;
+        box-shadow: 0 0 8px var(--accent);
+      }
+      #status.err { color: var(--err); }
+      #status.err::before { background: var(--err); box-shadow: 0 0 8px var(--err); }
+      #status.pulse::before { animation: dotPulse 1.4s ease-in-out infinite; }
+      @keyframes dotPulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.4; transform: scale(0.7); }
+      }
+
+      /* Repo presets row */
+      .presets {
+        position: fixed;
+        top: 64px;
+        left: 22px;
+        right: 22px;
+        z-index: 9;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        font-size: 11px;
+        color: var(--dim);
+        pointer-events: none;
+      }
+      .presets > * { pointer-events: auto; }
+      .presets .label {
+        color: var(--faint);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 10px;
+        margin-right: 4px;
+      }
+      .chip {
+        padding: 4px 10px;
+        background: rgba(18, 12, 34, 0.5);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        color: var(--dim);
+        transition: all 0.15s;
+        backdrop-filter: blur(8px);
+      }
+      .chip:hover {
+        color: var(--accent);
+        border-color: rgba(255, 179, 71, 0.4);
+        transform: translateY(-1px);
+      }
+
+      /* Sidebar */
+      #sidebar {
+        position: fixed;
+        top: 110px;
+        left: 22px;
+        width: 300px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        padding: 18px 20px;
+        font-size: 12px;
+        backdrop-filter: blur(14px);
+        opacity: 0;
+        transform: translateX(-12px);
+        transition: opacity 0.4s, transform 0.4s;
+        pointer-events: none;
+        z-index: 9;
+        box-shadow: var(--shadow);
+        max-height: calc(100vh - 140px);
+        overflow-y: auto;
+      }
+      #sidebar.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+      #repo-name {
+        font-family: 'Fraunces', serif;
+        font-style: italic;
+        font-weight: 600;
+        font-size: 26px;
+        color: var(--ink);
+        line-height: 1.05;
+        word-break: break-word;
+      }
+      #repo-branch {
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 6px;
+        margin-bottom: 5px;
+        word-break: break-all;
+      }
+      #repo-branch a {
+        color: var(--dim);
+        text-decoration: none;
+        transition: color 0.15s;
+      }
+      #repo-branch a:hover { color: var(--accent); }
+      #repo-coverage {
+        color: var(--faint);
+        font-size: 10px;
+        line-height: 1.45;
+        margin-bottom: 18px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 16px;
+        margin-bottom: 18px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--panel-border);
+      }
+      .stat-label {
+        color: var(--faint);
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 3px;
+      }
+      .stat-val {
+        color: var(--ink);
+        font-weight: 600;
+        font-size: 16px;
+        font-family: 'Fraunces', serif;
+      }
+      .section-label {
+        color: var(--faint);
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 10px;
+      }
+      #lang-bars { display: flex; flex-direction: column; gap: 7px; }
+      .lang-bar {
+        display: grid;
+        grid-template-columns: 12px 1fr 56px 30px;
+        gap: 8px;
+        align-items: center;
+        font-size: 11px;
+      }
+      .swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        display: inline-block;
+        box-shadow: 0 0 8px currentColor;
+      }
+      .name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .track { background: rgba(255,255,255,0.06); height: 5px; border-radius: 3px; overflow: hidden; }
+      .fill {
+        display: block;
+        height: 100%;
+        background: currentColor;
+        border-radius: 3px;
+        transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+      .pct { color: var(--dim); text-align: right; font-size: 10px; }
+
+      .sidebar-actions {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--panel-border);
+        display: flex;
+        gap: 8px;
+      }
+      .sidebar-actions button { flex: 1; }
+
+      /* Info panel (clicked building) */
+      #info {
+        position: fixed;
+        bottom: 22px;
+        left: 22px;
+        max-width: 380px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        padding: 16px 18px;
+        font-size: 12px;
+        backdrop-filter: blur(14px);
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.3s, transform 0.3s;
+        pointer-events: none;
+        z-index: 9;
+        box-shadow: var(--shadow);
+      }
+      #info.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+      #info-filename {
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--ink);
+        font-family: 'Fraunces', serif;
+        font-style: italic;
+        word-break: break-all;
+      }
+      #info-path {
+        color: var(--dim);
+        font-size: 11px;
+        margin-top: 3px;
+        word-break: break-all;
+      }
+      .info-grid {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 6px 16px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--panel-border);
+      }
+      .info-grid > .k {
+        color: var(--faint);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      /* Bottom-right help / hints */
+      #hints {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 8;
+        display: flex;
+        gap: 8px;
+        flex-direction: column;
+        align-items: flex-end;
+        font-size: 10.5px;
+        color: var(--faint);
+        pointer-events: none;
+      }
+      #hints kbd {
+        background: rgba(18, 12, 34, 0.6);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: var(--dim);
+        margin: 0 1px;
+      }
+      .hint-row {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 7px;
+        padding: 6px 11px;
+        backdrop-filter: blur(10px);
+        opacity: 0.85;
+        transition: opacity 0.2s;
+        pointer-events: auto;
+      }
+      .hint-row:hover { opacity: 1; }
+
+      /* Loading overlay */
+      #loading, #no-gpu {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(14, 10, 31, 0.78);
+        backdrop-filter: blur(8px);
+        z-index: 100;
+        text-align: center;
+        padding: 24px;
+      }
+      #loading.visible, #no-gpu.visible { display: flex; }
+      #no-gpu .msg {
+        max-width: 480px;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--ink);
+        background: var(--panel-solid);
+        border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        padding: 32px 36px;
+        box-shadow: var(--shadow);
+      }
+      #no-gpu .msg h2 {
+        color: var(--accent);
+        margin: 0 0 14px 0;
+        font-family: 'Fraunces', serif;
+        font-style: italic;
+        font-weight: 600;
+        font-size: 26px;
+      }
+      #no-gpu .msg p { margin: 0 0 8px 0; color: var(--dim); }
+      #no-gpu .msg code {
+        background: rgba(255, 255, 255, 0.06);
+        padding: 1px 6px;
+        border-radius: 4px;
+        color: var(--accent);
+        font-size: 11.5px;
+      }
+      .loading-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      .loading-card .label {
+        font-size: 12px;
+        color: var(--dim);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .spinner {
+        width: 32px; height: 32px;
+        border: 2px solid rgba(255,255,255,0.1);
+        border-top-color: var(--accent);
+        border-right-color: var(--accent-2);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Mobile */
+      @media (max-width: 720px) {
+        header { flex-wrap: wrap; gap: 8px; padding: 12px; }
+        .input-wrap input { width: calc(100vw - 220px); min-width: 160px; }
+        .presets { display: none; }
+        #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 130px; }
+        #info { left: 12px; right: 12px; max-width: none; }
+        #hints { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage" aria-label="Interactive repository city visualization"></canvas>
+    <div class="grain"></div>
+
+    <header>
+      <div class="brand">
+        repo<span class="dot">.</span>city<span class="ver">v2</span>
+      </div>
+      <div class="input-wrap">
+        <input id="repo" type="text" aria-label="GitHub repository" placeholder="owner/repo" value="facebook/react" spellcheck="false" autocomplete="off" />
+      </div>
+      <button id="go" class="primary">build city</button>
+      <button id="capture-header" class="icon" title="Capture poster (1920×1080)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        capture
+      </button>
+      <div id="status" role="status" aria-live="polite">initializing…</div>
+    </header>
+
+    <div class="presets">
+      <span class="label">try:</span>
+      <button class="chip" data-repo="facebook/react">facebook/react</button>
+      <button class="chip" data-repo="vuejs/vue">vuejs/vue</button>
+      <button class="chip" data-repo="microsoft/vscode">microsoft/vscode</button>
+      <button class="chip" data-repo="rust-lang/rust">rust-lang/rust</button>
+      <button class="chip" data-repo="torvalds/linux">torvalds/linux</button>
+      <button class="chip" data-repo="three.js/three.js" data-actual="mrdoob/three.js">three.js</button>
+      <button class="chip" data-repo="tailwindlabs/tailwindcss">tailwindcss</button>
+    </div>
+
+    <aside id="sidebar">
+      <div id="repo-name">—</div>
+      <div id="repo-branch">—</div>
+      <div id="repo-coverage" aria-live="polite">—</div>
+      <div class="stats">
+        <div>
+          <div class="stat-label">files</div>
+          <div class="stat-val" id="stat-files">—</div>
+        </div>
+        <div>
+          <div class="stat-label">size</div>
+          <div class="stat-val" id="stat-size">—</div>
+        </div>
+        <div>
+          <div class="stat-label">dirs</div>
+          <div class="stat-val" id="stat-dirs">—</div>
+        </div>
+        <div>
+          <div class="stat-label">tallest</div>
+          <div class="stat-val" id="stat-tallest">—</div>
+        </div>
+      </div>
+      <div class="section-label" id="language-label">languages</div>
+      <div id="lang-bars"></div>
+      <div class="sidebar-actions">
+        <button id="capture">capture poster</button>
+      </div>
+    </aside>
+
+    <div id="info">
+      <div id="info-filename">—</div>
+      <div id="info-path">—</div>
+      <div class="info-grid">
+        <div class="k">size</div><div id="info-size">—</div>
+        <div class="k">lang</div><div id="info-lang">—</div>
+      </div>
+    </div>
+
+    <div id="hints">
+      <div class="hint-row"><kbd>drag</kbd> orbit · <kbd>scroll</kbd> zoom · <kbd>click</kbd> inspect</div>
+    </div>
+
+    <div id="loading" role="status" aria-live="polite">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <div class="label">building city…</div>
+      </div>
+    </div>
+    <div id="no-gpu" role="alert">
+      <div class="msg">
+        <h2>GPU required</h2>
+        <p>repo.city couldn't initialise WebGL on this device.</p>
+        <p>Enable hardware acceleration in your browser settings and restart. If the problem persists, check your browser's GPU diagnostics.</p>
+      </div>
+    </div>
+
+    <script>
+      // Repo preset chips
+      document.querySelectorAll('.chip').forEach((el) => {
+        el.addEventListener('click', () => {
+          const repo = el.getAttribute('data-actual') || el.getAttribute('data-repo');
+          const input = document.getElementById('repo');
+          const goBtn = document.getElementById('go');
+          if (input && goBtn && repo) {
+            input.value = repo;
+            goBtn.click();
+          }
+        });
+      });
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

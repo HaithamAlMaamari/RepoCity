@@ -1,0 +1,39 @@
+{
+  "name": "repo-city",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "predev": "npm run build",
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "wrangler dev --port 8787",
+    "typecheck": "npm run typecheck:app && npm run typecheck:worker",
+    "typecheck:app": "tsc --noEmit",
+    "pretypecheck:worker": "wrangler types",
+    "typecheck:worker": "tsc --project worker/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "npm run typecheck && vite build",
+    "check": "npm run test && npm run build",
+    "audit": "npm audit --audit-level=high",
+    "preview": "vite preview",
+    "worker:types": "wrangler types",
+    "deploy:check": "npm run build && wrangler deploy --dry-run",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.8",
+    "@playwright/cli": "0.1.17",
+    "@types/three": "^0.171.0",
+    "chrome-devtools-mcp": "1.6.0",
+    "concurrently": "10.0.4",
+    "typescript": "^5.6.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.114.0"
+  }
+}

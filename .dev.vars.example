@@ -1,0 +1,3 @@
+# Optional for local Worker development. Use a fine-grained token limited to
+# public repository contents and never commit the real `.dev.vars` file.
+GITHUB_TOKEN=

@@ -1,0 +1,206 @@
+/**
+ * Architectural secondary masses for the city skyline.
+ *
+ * The primary building mesh stays instanced and shader-driven. These
+ * secondary masses create the readable silhouettes that a plain box cannot:
+ * podiums, setbacks, crowns, and spires. Each layer is batched into one
+ * InstancedMesh, so the detail costs a handful of draw calls rather than one
+ * object per building.
+ */
+
+import * as THREE from 'three';
+import type { Building } from './city';
+
+export interface ArchitectureDetails {
+  group: THREE.Group;
+  dispose(): void;
+}
+
+interface InstanceSpec {
+  x: number;
+  y: number;
+  z: number;
+  sx: number;
+  sy: number;
+  sz: number;
+}
+
+interface StripSpec extends InstanceSpec {
+  color: [number, number, number];
+}
+
+export function buildArchitectureDetails(buildings: Building[]): ArchitectureDetails {
+  const group = new THREE.Group();
+  const disposables: { dispose(): void }[] = [];
+  const podiums: InstanceSpec[] = [];
+  const ledges: InstanceSpec[] = [];
+  const crowns: InstanceSpec[] = [];
+  const spires: InstanceSpec[] = [];
+  const strips: StripSpec[] = [];
+
+  for (const b of buildings) {
+    const total = b.totalHeight;
+    const baseY = b.position[1] - b.scale[1] / 2;
+    const w = b.scale[0];
+    const d = b.scale[2];
+
+    if (b.profile === 'setback') {
+      const y = baseY + b.scale[1];
+      ledges.push({ x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
+      crowns.push({ x: b.position[0], y: baseY + total * 0.86, z: b.position[2], sx: w * 0.62, sy: total * 0.28, sz: d * 0.62 });
+      addStrips(strips, b, baseY + total * 0.86, w * 0.62, d * 0.62);
+    } else if (b.profile === 'tower') {
+      const y = baseY + b.scale[1];
+      ledges.push({ x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
+      crowns.push({ x: b.position[0], y: baseY + total * 0.89, z: b.position[2], sx: w * 0.42, sy: total * 0.18, sz: d * 0.42 });
+      addStrips(strips, b, baseY + total * 0.89, w * 0.42, d * 0.42);
+      spires.push({ x: b.position[0], y: baseY + total * 0.98, z: b.position[2], sx: Math.max(w * 0.06, 0.16), sy: total * 0.14, sz: Math.max(d * 0.06, 0.16) });
+    } else if (b.profile === 'mega') {
+      podiums.push({ x: b.position[0], y: baseY + 0.20, z: b.position[2], sx: w * 1.12, sy: 0.40, sz: d * 1.12 });
+      ledges.push({ x: b.position[0], y: baseY + b.scale[1], z: b.position[2], sx: w * 1.05, sy: 0.22, sz: d * 1.05 });
+      crowns.push({ x: b.position[0], y: baseY + total * 0.66, z: b.position[2], sx: w * 0.68, sy: total * 0.28, sz: d * 0.68 });
+      addStrips(strips, b, baseY + total * 0.66, w * 0.68, d * 0.68);
+      crowns.push({ x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
+      addStrips(strips, b, baseY + total * 0.885, w * 0.44, d * 0.44);
+      spires.push({ x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
+    }
+  }
+
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x17243b,
+    roughness: 0.68,
+    metalness: 0.38,
+    emissive: 0x020814,
+    emissiveIntensity: 0.35,
+  });
+  const upperMaterial = new THREE.MeshStandardMaterial({
+    color: 0x30486b,
+    roughness: 0.58,
+    metalness: 0.45,
+    emissive: 0x0a1c32,
+    emissiveIntensity: 0.48,
+  });
+  const spireMaterial = new THREE.MeshStandardMaterial({
+    color: 0x142038,
+    roughness: 0.48,
+    metalness: 0.72,
+    emissive: 0x031022,
+    emissiveIntensity: 0.3,
+  });
+
+  addBoxes(group, podiums, bodyMaterial, disposables);
+  addBoxes(group, ledges, bodyMaterial, disposables);
+  addBoxes(group, crowns, upperMaterial, disposables);
+  addSpires(group, spires, spireMaterial, disposables);
+  addStripsMesh(group, strips, disposables);
+
+  return {
+    group,
+    dispose() {
+      for (const disposable of disposables) disposable.dispose();
+    },
+  };
+}
+
+function addBoxes(
+  group: THREE.Group,
+  specs: InstanceSpec[],
+  material: THREE.MeshStandardMaterial,
+  disposables: { dispose(): void }[],
+): void {
+  if (specs.length === 0) return;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
+    dummy.position.set(s.x, s.y, s.z);
+    dummy.scale.set(s.sx, s.sy, s.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  group.add(mesh);
+  disposables.push(geometry);
+  // The material is shared by all boxes in this layer and disposed once by
+  // the caller's disposable list.
+  if (!disposables.includes(material)) disposables.push(material);
+}
+
+function addSpires(
+  group: THREE.Group,
+  specs: InstanceSpec[],
+  material: THREE.MeshStandardMaterial,
+  disposables: { dispose(): void }[],
+): void {
+  if (specs.length === 0) return;
+  const geometry = new THREE.CylinderGeometry(0.5, 0.9, 1, 6);
+  geometry.translate(0, 0.5, 0);
+  const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
+    dummy.position.set(s.x, s.y, s.z);
+    dummy.scale.set(s.sx, s.sy, s.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  group.add(mesh);
+  disposables.push(geometry);
+  if (!disposables.includes(material)) disposables.push(material);
+}
+
+function addStrips(
+  target: StripSpec[],
+  b: Building,
+  y: number,
+  width: number,
+  depth: number,
+): void {
+  const color: [number, number, number] = [b.color[0] * 0.78, b.color[1] * 0.78, b.color[2] * 0.78];
+  const z = depth / 2 + 0.025;
+  const x = width / 2 + 0.025;
+  target.push(
+    { x: b.position[0], y, z: b.position[2] - z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { x: b.position[0], y, z: b.position[2] + z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { x: b.position[0] - x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+    { x: b.position[0] + x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+  );
+}
+
+function addStripsMesh(
+  group: THREE.Group,
+  specs: StripSpec[],
+  disposables: { dispose(): void }[],
+): void {
+  if (specs.length === 0) return;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0.58,
+    vertexColors: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: true,
+  });
+  const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+  for (let i = 0; i < specs.length; i++) {
+    const s = specs[i];
+    dummy.position.set(s.x, s.y, s.z);
+    dummy.scale.set(s.sx, s.sy, s.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, color.setRGB(...s.color));
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 2;
+  group.add(mesh);
+  disposables.push(geometry, material);
+}

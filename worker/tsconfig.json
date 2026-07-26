@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "./**/*.ts",
+    "../src/data/github-contract.ts",
+    "../worker-configuration.d.ts"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "share": "disabled",
+  "autoupdate": "notify",
+
+  "skills": {
+    "paths": ["node_modules/@playwright/cli/skills"]
+  },
+
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": [
+        "npx",
+        "--no-install",
+        "chrome-devtools-mcp",
+        "--isolated",
+        "--no-usage-statistics",
+        "--no-performance-crux",
+        "--redact-network-headers",
+        "--allowed-url-pattern=http://127.0.0.1:5173/*",
+        "--allowed-url-pattern=ws://127.0.0.1:5173/*",
+        "--allowed-url-pattern=http://localhost:5173/*",
+        "--allowed-url-pattern=ws://localhost:5173/*",
+        "--allowed-url-pattern=https://fonts.googleapis.com/*",
+        "--allowed-url-pattern=https://fonts.gstatic.com/*",
+        "--screenshot-format=webp",
+        "--screenshot-quality=85",
+        "--screenshot-max-width=1600",
+        "--screenshot-max-height=1200"
+      ],
+      "cwd": ".",
+      "environment": {
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
+        "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1"
+      },
+      "enabled": true,
+      "timeout": 30000
+    }
+  },
+
+  "permission": {
+    "chrome-devtools_*": "ask",
+    "chrome-devtools_upload*": "deny",
+    "chrome-devtools_*extension*": "deny",
+    "chrome-devtools_*3p*": "deny",
+    "chrome-devtools_*webmcp*": "deny"
+  }
+}
