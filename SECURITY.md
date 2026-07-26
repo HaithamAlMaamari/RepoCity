@@ -11,12 +11,14 @@ Do not publish suspected secrets or exploitable details in a public issue. Repor
 ## Security Boundaries
 
 - Browser code is public and cannot safely contain shared credentials.
-- RepoCity must not request, persist, log, or bundle a GitHub personal access token.
+- Browser code must not request, persist, log, or bundle a user-supplied GitHub personal access token.
 - The Cloudflare Worker may use an encrypted `GITHUB_TOKEN` secret for public-repository quota only.
 - Private repositories are rejected even if that Worker secret can access them.
 - GitHub repository metadata and file paths are untrusted input.
 - Browser automation uses isolated temporary profiles and public test data only.
 - Third-party packages must be exact-versioned where they execute with browser or operating-system privileges.
+
+The detailed trust boundaries, abuse cases, controls, and residual risks are maintained in [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md).
 
 ## Release Requirements
 

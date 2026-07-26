@@ -13,7 +13,12 @@ import {
 interface WorkerEnv {
   ASSETS: Fetcher;
   GITHUB_TOKEN?: string;
+  INGEST_GLOBAL_RATE_LIMITER: RateLimit;
+  INGEST_ACTOR_RATE_LIMITER: RateLimit;
 }
+
+const PUBLIC_INGESTION_KEY = 'public-repository-ingestion-v1';
+const RATE_LIMIT_SECONDS = 60;
 
 interface RepositoryRequest {
   owner: string;
@@ -35,17 +40,51 @@ export default {
 
       const parsed = parseRepositoryRequest(url);
       if (!parsed) return apiError(404, 'route_not_found', 'API route not found.', false, requestId);
+      await enforceRateLimit(request, env, requestId);
       return await handleRepositoryRequest(request, parsed, env, ctx, requestId);
     } catch (error) {
       if (error instanceof ApiFailure) {
         const headers: HeadersInit = error.retryAfter ? { 'Retry-After': error.retryAfter } : {};
         return apiError(error.status, error.code, error.message, error.retryable, requestId, headers);
       }
-      console.error('Unhandled RepoCity API error', { requestId, error });
+      console.error('Unhandled RepoCity API error', {
+        requestId,
+        name: error instanceof Error ? error.name : 'UnknownError',
+      });
       return apiError(500, 'internal_error', 'RepoCity could not complete the request.', true, requestId);
     }
   },
 };
+
+async function enforceRateLimit(request: Request, env: WorkerEnv, requestId: string): Promise<void> {
+  const actorKey = await rateLimitActorKey(request);
+  let actorAllowed: boolean;
+  let globalAllowed: boolean;
+  try {
+    ({ success: actorAllowed } = await env.INGEST_ACTOR_RATE_LIMITER.limit({ key: actorKey }));
+    if (!actorAllowed) {
+      throw new ApiFailure(429, 'request_rate_limited', 'RepoCity is receiving too many repository requests. Try again shortly.', true, String(RATE_LIMIT_SECONDS));
+    }
+    ({ success: globalAllowed } = await env.INGEST_GLOBAL_RATE_LIMITER.limit({ key: PUBLIC_INGESTION_KEY }));
+  } catch (error) {
+    if (error instanceof ApiFailure) throw error;
+    console.error('RepoCity rate limiter failed', {
+      requestId,
+      name: error instanceof Error ? error.name : 'UnknownError',
+    });
+    throw new ApiFailure(503, 'rate_limit_unavailable', 'RepoCity cannot safely accept ingestion requests right now.', true, String(RATE_LIMIT_SECONDS));
+  }
+  if (!globalAllowed) {
+    throw new ApiFailure(429, 'request_rate_limited', 'RepoCity is receiving too many repository requests. Try again shortly.', true, String(RATE_LIMIT_SECONDS));
+  }
+}
+
+async function rateLimitActorKey(request: Request): Promise<string> {
+  const actor = request.headers.get('CF-Connecting-IP') ?? 'unknown-client';
+  const bytes = new TextEncoder().encode(`repocity-actor-v1\0${actor}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return `actor-${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 
 async function handleRepositoryRequest(
   request: Request,

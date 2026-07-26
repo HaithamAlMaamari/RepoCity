@@ -28,7 +28,23 @@ describe('parseRepositoryRequest', () => {
 });
 
 function workerEnv(): Parameters<typeof worker.fetch>[1] {
-  return { ASSETS: { fetch: vi.fn() } as unknown as Fetcher };
+  const allow = () => ({ limit: vi.fn().mockResolvedValue({ success: true }) as unknown as RateLimit['limit'] });
+  return {
+    ASSETS: { fetch: vi.fn() } as unknown as Fetcher,
+    INGEST_ACTOR_RATE_LIMITER: allow() as RateLimit,
+    INGEST_GLOBAL_RATE_LIMITER: allow() as RateLimit,
+  };
+}
+
+function rateLimitedEnv(
+  actorLimit: ReturnType<typeof vi.fn>,
+  globalLimit = vi.fn().mockResolvedValue({ success: true }),
+): Parameters<typeof worker.fetch>[1] {
+  return {
+    ...workerEnv(),
+    INGEST_ACTOR_RATE_LIMITER: { limit: actorLimit } as unknown as RateLimit,
+    INGEST_GLOBAL_RATE_LIMITER: { limit: globalLimit } as unknown as RateLimit,
+  };
 }
 
 function executionContext(): Parameters<typeof worker.fetch>[2] {
@@ -48,6 +64,126 @@ function abortingFetch(rejectionDelay = 0) {
   }));
 }
 
+describe('Worker ingestion rate limiting', () => {
+  it('rejects over-limit requests before starting GitHub work', async () => {
+    const actorLimit = vi.fn().mockResolvedValue({ success: false });
+    const globalLimit = vi.fn().mockResolvedValue({ success: true });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await worker.fetch(
+      new Request('https://repo.city/api/repositories/owner/repo/tree', {
+        headers: { 'CF-Connecting-IP': '203.0.113.10' },
+      }),
+      rateLimitedEnv(actorLimit, globalLimit),
+      executionContext(),
+    );
+    const payload = await response.json() as { error: { code: string; retryable: boolean } };
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(payload.error).toMatchObject({ code: 'request_rate_limited', retryable: true });
+    expect(actorLimit).toHaveBeenCalledWith({ key: expect.stringMatching(/^actor-[0-9a-f]{64}$/) });
+    expect(JSON.stringify(actorLimit.mock.calls)).not.toContain('203.0.113.10');
+    expect(globalLimit).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('enforces the public-ingestion bucket after the actor bucket', async () => {
+    const actorLimit = vi.fn().mockResolvedValue({ success: true });
+    const globalLimit = vi.fn().mockResolvedValue({ success: false });
+
+    const response = await worker.fetch(
+      new Request('https://repo.city/api/repositories/owner/repo/tree'),
+      rateLimitedEnv(actorLimit, globalLimit),
+      executionContext(),
+    );
+
+    expect(response.status).toBe(429);
+    expect(actorLimit).toHaveBeenCalledTimes(1);
+    expect(globalLimit).toHaveBeenCalledWith({ key: 'public-repository-ingestion-v1' });
+  });
+
+  it('separates actor buckets without exposing raw addresses', async () => {
+    const actorLimit = vi.fn().mockResolvedValue({ success: false });
+    const firstAddress = '203.0.113.30';
+    const secondAddress = '203.0.113.31';
+
+    for (const address of [firstAddress, secondAddress]) {
+      await worker.fetch(
+        new Request('https://repo.city/api/repositories/owner/repo/tree', {
+          headers: { 'CF-Connecting-IP': address },
+        }),
+        rateLimitedEnv(actorLimit),
+        executionContext(),
+      );
+    }
+
+    const keys = actorLimit.mock.calls.map(([input]) => (input as { key: string }).key);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys.join(' ')).not.toContain(firstAddress);
+    expect(keys.join(' ')).not.toContain(secondAddress);
+  });
+
+  it('fails closed without logging request or repository identifiers when the limiter errors', async () => {
+    const actorLimit = vi.fn().mockRejectedValue(new Error('binding unavailable'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await worker.fetch(
+      new Request('https://repo.city/api/repositories/private-interest/repo/tree'),
+      rateLimitedEnv(actorLimit),
+      executionContext(),
+    );
+    const payload = await response.json() as { error: { code: string; retryable: boolean } };
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    expect(payload.error).toMatchObject({ code: 'rate_limit_unavailable', retryable: true });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-interest');
+  });
+
+  it('fails closed when required limiter bindings are missing at runtime', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const env = { ASSETS: { fetch: vi.fn() } as unknown as Fetcher } as Parameters<typeof worker.fetch>[1];
+
+    const response = await worker.fetch(
+      new Request('https://repo.city/api/repositories/owner/repo/tree'),
+      env,
+      executionContext(),
+    );
+    const payload = await response.json() as { error: { code: string } };
+
+    expect(response.status).toBe(503);
+    expect(payload.error.code).toBe('rate_limit_unavailable');
+  });
+
+  it('checks valid ingestion requests but not rejected methods', async () => {
+    const actorLimit = vi.fn().mockResolvedValue({ success: true });
+    const globalLimit = vi.fn().mockResolvedValue({ success: true });
+    const controller = new AbortController();
+    controller.abort();
+
+    const cancelled = await worker.fetch(
+      new Request('https://repo.city/api/repositories/owner/repo/tree', { signal: controller.signal }),
+      rateLimitedEnv(actorLimit, globalLimit),
+      executionContext(),
+    );
+    expect(cancelled.status).toBe(499);
+    expect(actorLimit).toHaveBeenCalledWith({ key: expect.stringMatching(/^actor-[0-9a-f]{64}$/) });
+    expect(globalLimit).toHaveBeenCalledWith({ key: 'public-repository-ingestion-v1' });
+
+    const methodError = await worker.fetch(
+      new Request('https://repo.city/api/repositories/owner/repo/tree', { method: 'POST' }),
+      rateLimitedEnv(actorLimit, globalLimit),
+      executionContext(),
+    );
+    expect(methodError.status).toBe(405);
+    expect(actorLimit).toHaveBeenCalledTimes(1);
+    expect(globalLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('Worker request cancellation', () => {
   it('returns a retryable timeout when upstream work exceeds 25 seconds', async () => {
     vi.useFakeTimers();
@@ -59,6 +195,7 @@ describe('Worker request cancellation', () => {
       executionContext(),
     );
 
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await vi.advanceTimersByTimeAsync(25_000);
     const response = await responsePromise;
     const payload = await response.json() as { error: { code: string; retryable: boolean; requestId: string } };
@@ -127,6 +264,7 @@ describe('Worker request cancellation', () => {
       executionContext(),
     );
 
+    await vi.waitFor(() => expect(cacheMatch).toHaveBeenCalledTimes(1));
     await vi.advanceTimersByTimeAsync(25_000);
     const response = await responsePromise;
     const payload = await response.json() as { error: { code: string } };

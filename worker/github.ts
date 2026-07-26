@@ -116,9 +116,7 @@ export class GithubClient {
       } catch (error) {
         if (this.signal.aborted) throw error;
         console.error('GitHub fetch failed', {
-          path: current.pathname,
           name: error instanceof Error ? error.name : 'UnknownError',
-          message: error instanceof Error ? error.message : String(error),
         });
         if (retry) return this.getJson(path, false);
         throw new ApiFailure(503, 'github_unavailable', 'GitHub is temporarily unavailable.', true);
@@ -173,9 +171,7 @@ export class GithubClient {
         if (error instanceof ApiFailure) throw error;
         if (this.signal.aborted) throw error;
         console.error('GitHub response body failed', {
-          path: current.pathname,
           name: error instanceof Error ? error.name : 'UnknownError',
-          message: error instanceof Error ? error.message : String(error),
         });
         if (retry) return this.getJson(path, false);
         throw new ApiFailure(503, 'github_unavailable', 'GitHub is temporarily unavailable.', true);

@@ -17,7 +17,7 @@ describe('RepoCity Worker in Workerd', () => {
     const response = await worker.fetch(new IncomingRequest('https://repo.city/health'), env, ctx);
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe('asset:/health');
+    expect(await response.text()).toContain('<title>repo.city');
   });
 
   it('returns consistent method errors with hardened headers', async () => {

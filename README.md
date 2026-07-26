@@ -51,6 +51,8 @@ Browser-audit tooling is project-scoped and restricted to isolated profiles and 
 - GitHub's recursive tree API can truncate responses above 100,000 entries or 7 MB.
 - Treat repository names, paths, API responses, and URL state as untrusted data.
 
+The formal security and abuse analysis is documented in [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md).
+
 Production uses Cloudflare Workers Static Assets plus the same-origin ingestion Worker. Configure the optional encrypted production credential with `npx wrangler secret put GITHUB_TOKEN`; never put it in `wrangler.jsonc`.
 
 ## Deployment
@@ -61,6 +63,8 @@ npm run deploy
 ```
 
 Complete traversal of very large repositories requires a Workers Paid plan because the Free plan's CPU and subrequest limits are not sufficient for the bounded fallback traversal. The architecture decision is recorded in [`docs/architecture/ADR-001-github-data-service.md`](docs/architecture/ADR-001-github-data-service.md).
+
+Wrangler configures mandatory actor and global ingestion rate limiters at 3 and 10 requests per minute per Cloudflare location. Before production deployment, confirm namespace IDs `10001` and `10002` are unused elsewhere in the account, then validate limiter thresholds, WAF/DDoS rules, alerting, cache behavior, and log retention on the custom domain.
 
 ## Project Structure
 

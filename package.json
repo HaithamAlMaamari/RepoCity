@@ -18,6 +18,7 @@
     "typecheck:worker": "tsc --project worker/tsconfig.json",
     "test": "npm run test:unit && npm run test:worker-runtime",
     "test:unit": "vitest run --exclude worker/**/*.workerd.test.ts",
+    "pretest:worker-runtime": "vite build",
     "test:worker-runtime": "vitest run --config vitest.worker.config.ts",
     "test:watch": "vitest --exclude worker/**/*.workerd.test.ts",
     "build": "npm run typecheck && vite build",

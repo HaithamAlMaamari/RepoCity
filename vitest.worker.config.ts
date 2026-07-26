@@ -4,10 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      main: './worker/index.ts',
+      wrangler: { configPath: './wrangler.jsonc' },
       miniflare: {
-        compatibilityDate: '2026-07-26',
-        compatibilityFlags: ['enable_request_signal'],
         serviceBindings: {
           ASSETS: async (request: Request) => new Response(`asset:${new URL(request.url).pathname}`),
         },
