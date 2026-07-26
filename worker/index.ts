@@ -137,7 +137,8 @@ export function parseRepositoryRequest(url: URL): RepositoryRequest | null {
   } catch {
     throw new ApiFailure(400, 'invalid_request', 'Repository path is not valid URL encoding.');
   }
-  if (!/^[A-Za-z0-9-]{1,39}$/.test(owner) || !/^[A-Za-z0-9._-]{1,100}$/.test(repo) || repo === '.' || repo === '..') {
+  const invalidOwner = !/^[A-Za-z0-9-]{1,39}$/.test(owner) || owner.startsWith('-') || owner.endsWith('-') || owner.includes('--');
+  if (invalidOwner || !/^[A-Za-z0-9._-]{1,100}$/.test(repo) || repo === '.' || repo === '..') {
     throw new ApiFailure(400, 'invalid_request', 'Use a valid GitHub owner and repository name.');
   }
 

@@ -18,8 +18,15 @@ const GITHUB_ORIGIN = 'https://api.github.com';
 const GITHUB_API_VERSION = '2026-03-10';
 const MAX_GITHUB_REQUESTS = 190;
 const MAX_JSON_BYTES = 9_000_000;
-const MAX_TREE_ENTRIES = 250_000;
-const MAX_TREE_DEPTH = 64;
+export const GITHUB_TRAVERSAL_LIMITS = Object.freeze({
+  maxEntries: 250_000,
+  maxDepth: 64,
+});
+
+export interface TraversalLimits {
+  readonly maxEntries: number;
+  readonly maxDepth: number;
+}
 
 interface GithubRepositoryResponse {
   owner: { login: string };
@@ -287,21 +294,17 @@ export async function buildRepositoryPayload(
   client: GithubClient,
   resolved: ResolvedRepository,
   maxFiles: number,
+  traversalLimits: TraversalLimits = GITHUB_TRAVERSAL_LIMITS,
 ): Promise<RepositoryTreePayload> {
-  const entries = await loadCompleteTree(client, resolved.repository, resolved.revision.treeSha);
+  const entries = await loadCompleteTree(client, resolved.repository, resolved.revision.treeSha, traversalLimits);
+  validateTreeHierarchy(entries);
   const files: RepositoryFile[] = [];
   const submodules: RepositorySubmodule[] = [];
   const directoryPaths = new Set<string>();
-  const allPaths = new Set<string>();
   const languages = new Map<string, LanguageTotal>();
   let totalBytes = 0;
 
   for (const entry of entries) {
-    if (allPaths.has(entry.path)) {
-      throw new ApiFailure(502, 'invalid_upstream_response', `GitHub returned duplicate path: ${entry.path}`);
-    }
-    allPaths.add(entry.path);
-
     if (entry.type === 'tree') {
       directoryPaths.add(entry.path);
       continue;
@@ -369,11 +372,12 @@ async function loadCompleteTree(
   client: GithubClient,
   repository: RepositoryIdentity,
   rootTreeSha: string,
+  limits: TraversalLimits,
 ): Promise<GithubTreeEntry[]> {
   const entries: GithubTreeEntry[] = [];
 
   async function visit(treeSha: string, prefix: string, depth: number): Promise<void> {
-    if (depth > MAX_TREE_DEPTH) {
+    if (depth > limits.maxDepth) {
       throw new ApiFailure(422, 'tree_too_deep', 'Repository tree exceeds RepoCity\'s safe depth limit.');
     }
 
@@ -382,7 +386,7 @@ async function loadCompleteTree(
       throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub returned the wrong repository subtree.');
     }
     if (!recursive.truncated) {
-      for (const entry of recursive.tree) addEntry(entries, prefixEntry(entry, prefix));
+      for (const entry of recursive.tree) addEntry(entries, prefixEntry(entry, prefix), limits);
       return;
     }
 
@@ -395,8 +399,11 @@ async function loadCompleteTree(
     }
 
     for (const entry of direct.tree) {
+      if (entry.path.includes('/')) {
+        throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub returned a nested path in a direct subtree response.');
+      }
       const prefixed = prefixEntry(entry, prefix);
-      addEntry(entries, prefixed);
+      addEntry(entries, prefixed, limits);
       if (entry.type === 'tree') await visit(entry.sha, `${prefixed.path}/`, depth + 1);
     }
   }
@@ -410,11 +417,35 @@ function treeUrl(repository: RepositoryIdentity, treeSha: string, recursive: boo
   return recursive ? `${base}?recursive=1` : base;
 }
 
-function addEntry(entries: GithubTreeEntry[], entry: GithubTreeEntry): void {
-  if (entries.length >= MAX_TREE_ENTRIES) {
+function addEntry(entries: GithubTreeEntry[], entry: GithubTreeEntry, limits: TraversalLimits): void {
+  if (entries.length >= limits.maxEntries) {
     throw new ApiFailure(413, 'repository_too_large', 'Repository contains more entries than RepoCity can process safely.');
   }
+  const segments = entry.path.split('/').length;
+  const depth = entry.type === 'tree' ? segments : segments - 1;
+  if (depth > limits.maxDepth) {
+    throw new ApiFailure(422, 'tree_too_deep', 'Repository tree exceeds RepoCity\'s safe depth limit.');
+  }
   entries.push(entry);
+}
+
+function validateTreeHierarchy(entries: GithubTreeEntry[]): void {
+  const types = new Map<string, GithubTreeEntry['type']>();
+  for (const entry of entries) {
+    if (types.has(entry.path)) {
+      throw new ApiFailure(502, 'invalid_upstream_response', `GitHub returned duplicate path: ${entry.path}`);
+    }
+    types.set(entry.path, entry.type);
+  }
+  for (const entry of entries) {
+    const segments = entry.path.split('/');
+    for (let index = 1; index < segments.length; index++) {
+      const parent = segments.slice(0, index).join('/');
+      if (types.get(parent) !== 'tree') {
+        throw new ApiFailure(502, 'invalid_upstream_response', `GitHub omitted parent directory: ${parent}`);
+      }
+    }
+  }
 }
 
 function prefixEntry(entry: GithubTreeEntry, prefix: string): GithubTreeEntry {
@@ -494,7 +525,8 @@ function string(value: unknown, label: string): string {
 function githubName(value: unknown, label: string, max = 39, allowPunctuation = false): string {
   const result = string(value, label);
   const pattern = allowPunctuation ? /^[A-Za-z0-9._-]+$/ : /^[A-Za-z0-9-]+$/;
-  if (result.length > max || !pattern.test(result) || (allowPunctuation && (result === '.' || result === '..'))) {
+  const invalidOwner = !allowPunctuation && (result.startsWith('-') || result.endsWith('-') || result.includes('--'));
+  if (result.length > max || !pattern.test(result) || invalidOwner || (allowPunctuation && (result === '.' || result === '..'))) {
     throw new ApiFailure(502, 'invalid_upstream_response', `GitHub returned invalid ${label}.`);
   }
   return result;

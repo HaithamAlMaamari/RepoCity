@@ -13,7 +13,8 @@ const SEED_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 function isRepository(value: string): boolean {
   const [owner, repo, extra] = value.split('/');
-  return extra === undefined && OWNER_PATTERN.test(owner) && REPOSITORY_PATTERN.test(repo) && repo !== '.' && repo !== '..';
+  const validOwner = OWNER_PATTERN.test(owner) && !owner.startsWith('-') && !owner.endsWith('-') && !owner.includes('--');
+  return extra === undefined && validOwner && REPOSITORY_PATTERN.test(repo) && repo !== '.' && repo !== '..';
 }
 
 export function parseSceneHash(hash: string): SceneHashState | null {

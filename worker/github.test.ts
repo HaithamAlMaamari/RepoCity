@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildRepositoryPayload, GithubClient, resolveRepository } from './github';
+import { buildRepositoryPayload, GITHUB_TRAVERSAL_LIMITS, GithubClient, resolveRepository } from './github';
 
 const COMMIT = '1'.repeat(40);
 const ROOT_TREE = '2'.repeat(40);
@@ -206,6 +206,10 @@ describe('GitHub transport safety', () => {
 });
 
 describe('GitHub tree validation', () => {
+  it('keeps documented production traversal limits', () => {
+    expect(GITHUB_TRAVERSAL_LIMITS).toEqual({ maxEntries: 250_000, maxDepth: 64 });
+  });
+
   it('rejects a subtree that remains truncated during fallback traversal', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ sha: ROOT_TREE, truncated: true, tree: [] }))
@@ -259,6 +263,134 @@ describe('GitHub tree validation', () => {
     const client = new GithubClient(undefined, new AbortController().signal, fetchMock);
 
     await expect(resolveRepository(client, 'canonical', 'repo')).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_upstream_response',
+      message: 'GitHub returned invalid repository name.',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects invalid canonical owner names', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      ...metadata(),
+      owner: { login: 'bad--owner' },
+      full_name: 'bad--owner/repo',
+    }));
+    const client = new GithubClient(undefined, new AbortController().signal, fetchMock);
+
+    await expect(resolveRepository(client, 'canonical', 'repo')).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_upstream_response',
+      message: 'GitHub returned invalid repository owner.',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the entry boundary and rejects the next entry', async () => {
+    const entries = [
+      { path: 'a.ts', mode: '100644', type: 'blob', sha: FILE_A, size: 1 },
+      { path: 'b.ts', mode: '100644', type: 'blob', sha: FILE_B, size: 1 },
+    ];
+    const response = () => json({ sha: ROOT_TREE, truncated: false, tree: entries });
+    const accepted = new GithubClient(undefined, new AbortController().signal, vi.fn().mockImplementation(response));
+
+    await expect(buildRepositoryPayload(accepted, resolvedRepository(), 5_000, {
+      maxEntries: 2,
+      maxDepth: 64,
+    })).resolves.toMatchObject({ totals: { files: 2 } });
+
+    entries.push({ path: 'c.ts', mode: '100644', type: 'blob', sha: '6'.repeat(40), size: 1 });
+    const rejected = new GithubClient(undefined, new AbortController().signal, vi.fn().mockImplementation(response));
+    await expect(buildRepositoryPayload(rejected, resolvedRepository(), 5_000, {
+      maxEntries: 2,
+      maxDepth: 64,
+    })).rejects.toMatchObject({ status: 413, code: 'repository_too_large' });
+  });
+
+  it('accepts the depth boundary and rejects a deeper recursive path', async () => {
+    const acceptedClient = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [
+        { path: 'src', mode: '040000', type: 'tree', sha: CHILD_TREE },
+        { path: 'src/index.ts', mode: '100644', type: 'blob', sha: FILE_A, size: 1 },
+      ],
+    })));
+    await expect(buildRepositoryPayload(acceptedClient, resolvedRepository(), 5_000, {
+      maxEntries: 10,
+      maxDepth: 1,
+    })).resolves.toMatchObject({ totals: { files: 1, directories: 1 } });
+
+    const rejectedClient = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [
+        { path: 'src', mode: '040000', type: 'tree', sha: CHILD_TREE },
+        { path: 'src/deep', mode: '040000', type: 'tree', sha: '6'.repeat(40) },
+      ],
+    })));
+    await expect(buildRepositoryPayload(rejectedClient, resolvedRepository(), 5_000, {
+      maxEntries: 10,
+      maxDepth: 1,
+    })).rejects.toMatchObject({ status: 422, code: 'tree_too_deep' });
+  });
+
+  it('rejects missing parent trees and nested direct-tree entries', async () => {
+    const missingParent = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [{ path: 'src/index.ts', mode: '100644', type: 'blob', sha: FILE_A, size: 1 }],
+    })));
+    await expect(buildRepositoryPayload(missingParent, resolvedRepository(), 5_000)).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_upstream_response',
+    });
+
+    const nestedDirectFetch = vi.fn()
+      .mockResolvedValueOnce(json({ sha: ROOT_TREE, truncated: true, tree: [] }))
+      .mockResolvedValueOnce(json({
+        sha: ROOT_TREE,
+        truncated: false,
+        tree: [{ path: 'src/index.ts', mode: '100644', type: 'blob', sha: FILE_A, size: 1 }],
+      }));
+    const nestedDirect = new GithubClient(undefined, new AbortController().signal, nestedDirectFetch);
+    await expect(buildRepositoryPayload(nestedDirect, resolvedRepository(), 5_000)).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_upstream_response',
+      message: 'GitHub returned a nested path in a direct subtree response.',
+    });
+  });
+
+  it('accepts empty trees and zero-byte files, but rejects duplicate paths', async () => {
+    const emptyClient = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [],
+    })));
+    await expect(buildRepositoryPayload(emptyClient, resolvedRepository(), 5_000)).resolves.toMatchObject({
+      totals: { files: 0, directories: 0, submodules: 0, bytes: 0 },
+      languages: [],
+      files: [],
+    });
+
+    const zeroByteClient = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [{ path: 'empty.txt', mode: '100644', type: 'blob', sha: FILE_A, size: 0 }],
+    })));
+    await expect(buildRepositoryPayload(zeroByteClient, resolvedRepository(), 5_000)).resolves.toMatchObject({
+      totals: { files: 1, bytes: 0 },
+    });
+
+    const duplicateClient = new GithubClient(undefined, new AbortController().signal, vi.fn().mockResolvedValue(json({
+      sha: ROOT_TREE,
+      truncated: false,
+      tree: [
+        { path: 'same.ts', mode: '100644', type: 'blob', sha: FILE_A, size: 1 },
+        { path: 'same.ts', mode: '100644', type: 'blob', sha: FILE_B, size: 1 },
+      ],
+    })));
+    await expect(buildRepositoryPayload(duplicateClient, resolvedRepository(), 5_000)).rejects.toMatchObject({
       status: 502,
       code: 'invalid_upstream_response',
     });

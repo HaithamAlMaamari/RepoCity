@@ -24,11 +24,12 @@ Completed evidence:
 - Least-privilege GitHub Actions gate added for locked install, tests, typechecks, production build, dependency audit, deployment dry run, and tracked-file drift.
 - Commit-and-URL-seed scene streams now reproduce stars, ground traffic, aerial traffic, and particles without freezing animation playback.
 - Worker transport tests now cover malformed and oversized bodies, bounded redirects, rate limits, retries, cancellation, timeout precedence, traversal budgets, and invalid trees; isolated Workerd tests cover bindings, request signals, streams, and Cache API MISS/HIT behavior.
+- The browser contract now rejects inconsistent identities, policies, modes, paths, hierarchies, counts, and language totals; traversal fixtures cover depth and entry boundaries, missing parents, duplicate paths, empty trees, and zero-byte files.
 
 Still required before Phase 1 exits:
 
 - Cloudflare production account, custom domain, encrypted `GITHUB_TOKEN`, rate-limiting policy, and deployed cache validation.
-- Depth and maximum-entry boundary fixtures plus broader shared-contract invariant coverage.
+- Formal threat-model review and production abuse-control validation.
 
 ## Product Model
 

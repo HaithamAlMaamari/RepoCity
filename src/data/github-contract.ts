@@ -82,12 +82,14 @@ export function parseRepositoryTreePayload(value: unknown): RepositoryTreePayloa
   }
 
   const repositoryValue = record(root.repository, 'repository');
+  const owner = githubName(repositoryValue.owner, 'repository.owner', 39, false);
+  const name = githubName(repositoryValue.name, 'repository.name', 100, true);
   const repository: RepositoryIdentity = {
-    owner: text(repositoryValue.owner, 'repository.owner'),
-    name: text(repositoryValue.name, 'repository.name'),
+    owner,
+    name,
     fullName: text(repositoryValue.fullName, 'repository.fullName'),
     defaultBranch: text(repositoryValue.defaultBranch, 'repository.defaultBranch'),
-    htmlUrl: httpsUrl(repositoryValue.htmlUrl, 'repository.htmlUrl'),
+    htmlUrl: githubRepositoryUrl(repositoryValue.htmlUrl, owner, name),
   };
   if (repository.fullName !== `${repository.owner}/${repository.name}`) {
     throw new Error('RepoCity API returned an inconsistent repository identity.');
@@ -124,7 +126,7 @@ export function parseRepositoryTreePayload(value: unknown): RepositoryTreePayloa
     throw new Error('RepoCity API returned an unknown language policy.');
   }
   const selection = {
-    maxFiles: integer(selectionValue.maxFiles, 'selection.maxFiles'),
+    maxFiles: boundedInteger(selectionValue.maxFiles, 'selection.maxFiles', 1, MAX_SELECTED_FILES),
     returnedFiles: integer(selectionValue.returnedFiles, 'selection.returnedFiles'),
     omittedFiles: integer(selectionValue.omittedFiles, 'selection.omittedFiles'),
     policy,
@@ -137,7 +139,7 @@ export function parseRepositoryTreePayload(value: unknown): RepositoryTreePayloa
     return {
       path: repositoryPath(file.path, `files[${index}].path`),
       sha: sha(file.sha, `files[${index}].sha`),
-      mode: text(file.mode, `files[${index}].mode`),
+      mode: fileMode(file.mode, `files[${index}].mode`),
       size: integer(file.size, `files[${index}].size`),
       language: text(file.language, `files[${index}].language`),
     };
@@ -159,7 +161,7 @@ export function parseRepositoryTreePayload(value: unknown): RepositoryTreePayloa
     const language = record(item, `languages[${index}]`);
     return {
       language: text(language.language, `languages[${index}].language`),
-      files: integer(language.files, `languages[${index}].files`),
+      files: boundedInteger(language.files, `languages[${index}].files`, 1, Number.MAX_SAFE_INTEGER),
       bytes: integer(language.bytes, `languages[${index}].bytes`),
     };
   });
@@ -171,8 +173,86 @@ export function parseRepositoryTreePayload(value: unknown): RepositoryTreePayloa
   if (selection.returnedFiles !== files.length || selection.omittedFiles !== totals.files - files.length) {
     throw new Error('RepoCity API returned inconsistent selection counts.');
   }
+  if (selection.returnedFiles > selection.maxFiles) {
+    throw new Error('RepoCity API returned more files than the selection limit.');
+  }
   if ((coverageValue.selection === 'sampled') !== (files.length < totals.files)) {
     throw new Error('RepoCity API returned an inconsistent selection state.');
+  }
+  const expectedPolicy = coverageValue.selection === 'complete' ? 'all' : SAMPLING_POLICY;
+  if (selection.policy !== expectedPolicy || selection.seed !== revision.commitSha) {
+    throw new Error('RepoCity API returned inconsistent sampling metadata.');
+  }
+  if (totals.submodules !== submodules.length || emptyDirectories.length > totals.directories) {
+    throw new Error('RepoCity API returned inconsistent tree totals.');
+  }
+
+  const paths = new Set<string>();
+  const leafPaths = new Set([...files, ...submodules].map((item) => item.path));
+  const emptyDirectoryPaths = new Set(emptyDirectories);
+  for (const item of [...files, ...submodules, ...emptyDirectories.map((path) => ({ path }))]) {
+    if (paths.has(item.path)) throw new Error(`RepoCity API returned duplicate path: ${item.path}`);
+    paths.add(item.path);
+  }
+  const derivedDirectories = new Set<string>();
+  for (const path of leafPaths) {
+    const segments = path.split('/');
+    for (let index = 1; index < segments.length; index++) {
+      const parent = segments.slice(0, index).join('/');
+      if (leafPaths.has(parent) || emptyDirectoryPaths.has(parent)) {
+        throw new Error(`RepoCity API returned an invalid path hierarchy at: ${parent}`);
+      }
+      derivedDirectories.add(parent);
+    }
+  }
+  for (const path of emptyDirectoryPaths) {
+    const segments = path.split('/');
+    for (let index = 1; index <= segments.length; index++) {
+      const directory = segments.slice(0, index).join('/');
+      if (index < segments.length && (leafPaths.has(directory) || emptyDirectoryPaths.has(directory))) {
+        throw new Error(`RepoCity API returned an invalid path hierarchy at: ${directory}`);
+      }
+      derivedDirectories.add(directory);
+    }
+  }
+  if (derivedDirectories.size > totals.directories ||
+      (coverageValue.selection === 'complete' && derivedDirectories.size !== totals.directories)) {
+    throw new Error('RepoCity API returned inconsistent directory totals.');
+  }
+
+  const languageTotals = new Map<string, { files: number; bytes: number }>();
+  let languageFiles = 0;
+  let languageBytes = 0;
+  for (const language of languages) {
+    if (languageTotals.has(language.language)) {
+      throw new Error(`RepoCity API returned duplicate language: ${language.language}`);
+    }
+    languageTotals.set(language.language, language);
+    languageFiles = safeSum(languageFiles, language.files, 'language file totals');
+    languageBytes = safeSum(languageBytes, language.bytes, 'language byte totals');
+  }
+  if (languageFiles !== totals.files || languageBytes !== totals.bytes) {
+    throw new Error('RepoCity API returned inconsistent language totals.');
+  }
+
+  const selectedLanguages = new Map<string, { files: number; bytes: number }>();
+  let selectedBytes = 0;
+  for (const file of files) {
+    selectedBytes = safeSum(selectedBytes, file.size, 'selected file bytes');
+    const declared = languageTotals.get(file.language);
+    if (!declared) throw new Error(`RepoCity API returned an undeclared file language: ${file.language}`);
+    const selected = selectedLanguages.get(file.language) ?? { files: 0, bytes: 0 };
+    selected.files++;
+    selected.bytes = safeSum(selected.bytes, file.size, 'selected language bytes');
+    selectedLanguages.set(file.language, selected);
+  }
+  if (selectedBytes > totals.bytes) throw new Error('RepoCity API returned inconsistent selected file bytes.');
+  for (const [language, selected] of selectedLanguages) {
+    const declared = languageTotals.get(language)!;
+    if (selected.files > declared.files || selected.bytes > declared.bytes ||
+        (coverageValue.selection === 'complete' && (selected.files !== declared.files || selected.bytes !== declared.bytes))) {
+      throw new Error(`RepoCity API returned inconsistent totals for language: ${language}`);
+    }
   }
 
   return {
@@ -193,12 +273,13 @@ export function parseApiError(value: unknown): ApiErrorPayload | null {
   try {
     const root = record(value, 'error response');
     const error = record(root.error, 'error');
+    if (typeof error.retryable !== 'boolean') throw new Error('RepoCity API returned invalid error.retryable.');
     return {
       error: {
         code: text(error.code, 'error.code'),
         message: text(error.message, 'error.message'),
-        retryable: typeof error.retryable === 'boolean' ? error.retryable : false,
-        requestId: typeof error.requestId === 'string' ? error.requestId : undefined,
+        retryable: error.retryable,
+        requestId: error.requestId === undefined ? undefined : text(error.requestId, 'error.requestId'),
       },
     };
   } catch {
@@ -232,6 +313,18 @@ function integer(value: unknown, label: string): number {
   return value as number;
 }
 
+function boundedInteger(value: unknown, label: string, minimum: number, maximum: number): number {
+  const result = integer(value, label);
+  if (result < minimum || result > maximum) throw new Error(`RepoCity API returned invalid ${label}.`);
+  return result;
+}
+
+function safeSum(total: number, value: number, label: string): number {
+  const result = total + value;
+  if (!Number.isSafeInteger(result)) throw new Error(`RepoCity API returned invalid ${label}.`);
+  return result;
+}
+
 function sha(value: unknown, label: string): string {
   const result = text(value, label).toLowerCase();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result)) {
@@ -250,15 +343,27 @@ function repositoryPath(value: unknown, label: string): string {
   return result;
 }
 
-function httpsUrl(value: unknown, label: string): string {
+function githubName(value: unknown, label: string, max: number, allowPunctuation: boolean): string {
   const result = text(value, label);
-  let url: URL;
-  try {
-    url = new URL(result);
-  } catch {
+  const pattern = allowPunctuation ? /^[A-Za-z0-9._-]+$/ : /^[A-Za-z0-9-]+$/;
+  const invalidOwner = !allowPunctuation && (result.startsWith('-') || result.endsWith('-') || result.includes('--'));
+  if (result.length > max || !pattern.test(result) || invalidOwner || (allowPunctuation && (result === '.' || result === '..'))) {
     throw new Error(`RepoCity API returned invalid ${label}.`);
   }
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com') {
+  return result;
+}
+
+function githubRepositoryUrl(value: unknown, owner: string, name: string): string {
+  const result = text(value, 'repository.htmlUrl');
+  if (result !== `https://github.com/${owner}/${name}`) {
+    throw new Error('RepoCity API returned invalid repository.htmlUrl.');
+  }
+  return result;
+}
+
+function fileMode(value: unknown, label: string): string {
+  const result = text(value, label);
+  if (!['100644', '100755', '120000'].includes(result)) {
     throw new Error(`RepoCity API returned invalid ${label}.`);
   }
   return result;

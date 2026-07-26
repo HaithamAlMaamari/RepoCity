@@ -43,6 +43,9 @@ describe('scene URL state', () => {
     '#repo=octocat%2Frepo&seed=0&mode=explore',
     '#repo=octocat%2F..&seed=0',
     '#repo=invalid_owner%2Frepo&seed=0',
+    '#repo=-invalid%2Frepo&seed=0',
+    '#repo=invalid-%2Frepo&seed=0',
+    '#repo=invalid--owner%2Frepo&seed=0',
     '#repo=octocat%2Frepo%2Fextra&seed=0',
   ])('rejects invalid or ambiguous state: %s', (hash) => {
     expect(parseSceneHash(hash)).toBeNull();
