@@ -6,8 +6,8 @@ The project is currently moving from a polished prototype toward a production-qu
 
 ## Requirements
 
-- Node.js 22.13 or newer
-- npm
+- Node.js 22.13 or newer in the 22.x release line
+- npm 10.9.2
 - A browser with WebGL2 support
 
 ## Development
@@ -30,8 +30,11 @@ npm test
 npm run build
 npm run audit
 npm run check
+npm run ci
 npm run deploy:check
 ```
+
+`npm run ci` reproduces the GitHub Actions release gate: tests, both TypeScript targets, production build, high-severity dependency audit, and Cloudflare deployment dry run. CI also rejects checks that modify tracked files.
 
 Browser-audit tooling is project-scoped and restricted to isolated profiles and an explicit network allowlist. Restart OpenCode after changing `opencode.jsonc` or files under `.opencode/`.
 

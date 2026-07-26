@@ -21,13 +21,13 @@ Completed evidence:
 - Browser now consumes a runtime-validated same-origin contract and cancels stale repository loads.
 - Exact repository statistics, full-denominator language percentages, selected-versus-rendered disclosure, and commit-aware poster metadata implemented.
 - Initial unit suite, Worker deployment dry run, real GitHub cache MISS/HIT smoke test, desktop browser smoke, and mobile visual check pass.
+- Least-privilege GitHub Actions gate added for locked install, tests, typechecks, production build, dependency audit, deployment dry run, and tracked-file drift.
 
 Still required before Phase 1 exits:
 
 - Cloudflare production account, custom domain, encrypted `GITHUB_TOKEN`, rate-limiting policy, and deployed cache validation.
 - Broader malformed-response, traversal-budget, timeout, redirect, and Worker-runtime integration tests.
 - Deterministic scene effects; repository data is reproducible but ambient `Math.random()` effects are not yet.
-- CI and clean-check enforcement.
 
 ## Product Model
 

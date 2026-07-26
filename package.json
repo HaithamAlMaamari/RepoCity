@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": ">=22.13.0 <23"
+  },
   "scripts": {
     "predev": "npm run build",
     "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
@@ -16,6 +20,7 @@
     "test:watch": "vitest",
     "build": "npm run typecheck && vite build",
     "check": "npm run test && npm run build",
+    "ci": "npm run check && npm run audit && wrangler deploy --dry-run",
     "audit": "npm audit --audit-level=high",
     "preview": "vite preview",
     "worker:types": "wrangler types",
