@@ -55,25 +55,52 @@ async function handleRepositoryRequest(
   requestId: string,
 ): Promise<Response> {
   const controller = new AbortController();
-  let timedOut = false;
+  let abortSource: 'client' | 'timeout' | null = null;
+  const abort = (source: 'client' | 'timeout', reason: string) => {
+    if (abortSource) return;
+    abortSource = source;
+    controller.abort(reason);
+  };
   const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort('timeout');
+    abort('timeout', 'timeout');
   }, 25_000);
-  const cancel = () => controller.abort('client disconnected');
-  request.signal.addEventListener('abort', cancel, { once: true });
+  const cancel = () => abort('client', 'client disconnected');
+  if (request.signal.aborted) cancel();
+  else request.signal.addEventListener('abort', cancel, { once: true });
+  const abortFailure = () => abortSource === 'timeout'
+    ? new ApiFailure(504, 'request_timed_out', 'Repository processing timed out.', true)
+    : new ApiFailure(499, 'request_cancelled', 'Request was cancelled.');
+  const throwIfAborted = () => {
+    if (!controller.signal.aborted) return;
+    throw abortFailure();
+  };
+  const waitFor = <T>(operation: Promise<T>): Promise<T> => {
+    if (controller.signal.aborted) return Promise.reject(abortFailure());
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(abortFailure());
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      operation.then(
+        (value) => { controller.signal.removeEventListener('abort', onAbort); resolve(value); },
+        (error: unknown) => { controller.signal.removeEventListener('abort', onAbort); reject(error); },
+      );
+    });
+  };
 
   try {
+    throwIfAborted();
     const client = new GithubClient(env.GITHUB_TOKEN, controller.signal);
-    const resolved = await resolveRepository(client, parsed.owner, parsed.repo, parsed.commit);
+    const resolved = await waitFor(resolveRepository(client, parsed.owner, parsed.repo, parsed.commit));
+    throwIfAborted();
     const cacheRequest = createCacheRequest(request.url, resolved.repository.fullName, resolved.revision.commitSha, parsed.maxFiles);
     const cache = caches.default;
-    const cached = await cache.match(cacheRequest);
+    const cached = await waitFor(cache.match(cacheRequest));
+    throwIfAborted();
     if (cached) return publicResponse(cached, 'HIT', client.getRateLimit(), requestId);
 
-    const payload = await buildRepositoryPayload(client, resolved, parsed.maxFiles);
+    const payload = await waitFor(buildRepositoryPayload(client, resolved, parsed.maxFiles));
+    throwIfAborted();
     const serialized = JSON.stringify(payload);
-    if (serialized.length > 8_000_000) {
+    if (new TextEncoder().encode(serialized).byteLength > 8_000_000) {
       throw new ApiFailure(413, 'response_too_large', 'Repository result exceeds RepoCity\'s response budget.');
     }
 
@@ -88,10 +115,7 @@ async function handleRepositoryRequest(
     ctx.waitUntil(cache.put(cacheRequest, cachedResponse.clone()));
     return publicResponse(cachedResponse, 'MISS', client.getRateLimit(), requestId);
   } catch (error) {
-    if (controller.signal.aborted) {
-      if (timedOut) throw new ApiFailure(504, 'request_timed_out', 'Repository processing timed out.', true);
-      throw new ApiFailure(499, 'request_cancelled', 'Request was cancelled.');
-    }
+    if (controller.signal.aborted) throwIfAborted();
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -118,15 +142,17 @@ export function parseRepositoryRequest(url: URL): RepositoryRequest | null {
   }
 
   const allowed = new Set(['commit', 'maxFiles']);
+  const seen = new Set<string>();
   for (const key of url.searchParams.keys()) {
-    if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+    if (!allowed.has(key) || seen.has(key)) {
       throw new ApiFailure(400, 'invalid_request', `Invalid query parameter: ${key}`);
     }
+    seen.add(key);
   }
 
   const commitValue = url.searchParams.get('commit') ?? undefined;
   const commit = commitValue?.toLowerCase();
-  if (commit && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) {
+  if (commitValue !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit ?? '')) {
     throw new ApiFailure(400, 'invalid_request', 'Commit must be a full Git object SHA.');
   }
 

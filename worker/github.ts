@@ -121,12 +121,17 @@ export class GithubClient {
 
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location');
-        await response.body?.cancel();
+        await cancelBody(response);
         if (!location || redirects === 3) {
           throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub returned an invalid redirect.');
         }
-        const redirected = new URL(location, current);
-        if (redirected.protocol !== 'https:' || redirected.hostname !== 'api.github.com') {
+        let redirected: URL;
+        try {
+          redirected = new URL(location, current);
+        } catch {
+          throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub returned an invalid redirect URL.');
+        }
+        if (redirected.origin !== GITHUB_ORIGIN || redirected.username || redirected.password) {
           throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub redirected to an untrusted host.');
         }
         current = redirected;
@@ -134,29 +139,39 @@ export class GithubClient {
       }
 
       if (!response.ok) {
-        if (retry && [502, 503, 504].includes(response.status)) {
-          await response.body?.cancel();
+        if (retry && [500, 502, 503, 504].includes(response.status) && !response.headers.has('retry-after')) {
+          await cancelBody(response);
           return this.getJson(path, false);
         }
-        await response.body?.cancel();
+        await cancelBody(response);
         throw this.mapError(response);
       }
 
       const contentType = response.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('json')) {
-        await response.body?.cancel();
+        await cancelBody(response);
         throw new ApiFailure(502, 'invalid_upstream_response', 'GitHub returned an unexpected content type.');
       }
 
       const declaredLength = Number(response.headers.get('content-length'));
       if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) {
-        await response.body?.cancel();
+        await cancelBody(response);
         throw new ApiFailure(413, 'response_too_large', 'GitHub returned more data than RepoCity can process safely.');
       }
 
-      const text = await response.text();
-      if (text.length > MAX_JSON_BYTES) {
-        throw new ApiFailure(413, 'response_too_large', 'GitHub returned more data than RepoCity can process safely.');
+      let text: string;
+      try {
+        text = await readTextWithLimit(response, MAX_JSON_BYTES);
+      } catch (error) {
+        if (error instanceof ApiFailure) throw error;
+        if (this.signal.aborted) throw error;
+        console.error('GitHub response body failed', {
+          path: current.pathname,
+          name: error instanceof Error ? error.name : 'UnknownError',
+          message: error instanceof Error ? error.message : String(error),
+        });
+        if (retry) return this.getJson(path, false);
+        throw new ApiFailure(503, 'github_unavailable', 'GitHub is temporarily unavailable.', true);
       }
       try {
         return JSON.parse(text) as unknown;
@@ -199,7 +214,7 @@ export class GithubClient {
     if (response.status === 409) {
       return new ApiFailure(409, 'repository_empty', 'This repository has no Git tree to visualize.');
     }
-    if (response.status === 403 && remaining === '0' || response.status === 429) {
+    if (response.status === 429 || (response.status === 403 && (remaining === '0' || retryAfter !== undefined))) {
       return new ApiFailure(429, 'github_rate_limited', 'GitHub request limit reached. Try again later.', true, retryAfter);
     }
     if (response.status >= 500) {
@@ -207,6 +222,34 @@ export class GithubClient {
     }
     return new ApiFailure(502, 'github_request_failed', `GitHub rejected the request with status ${response.status}.`);
   }
+}
+
+async function readTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        try { await reader.cancel(); } catch { /* preserve the size-limit failure */ }
+        throw new ApiFailure(413, 'response_too_large', 'GitHub returned more data than RepoCity can process safely.');
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join('');
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function cancelBody(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch { /* preserve the primary response error */ }
 }
 
 export async function resolveRepository(
@@ -271,6 +314,9 @@ export async function buildRepositoryPayload(
     const language = detectLanguage(entry.path);
     const file = { path: entry.path, sha: entry.sha, mode: entry.mode, size: entry.size, language };
     files.push(file);
+    if (!Number.isSafeInteger(totalBytes + entry.size)) {
+      throw new ApiFailure(413, 'repository_too_large', 'Repository byte totals exceed RepoCity\'s safe numeric range.');
+    }
     totalBytes += entry.size;
     const aggregate = languages.get(language) ?? { language, files: 0, bytes: 0 };
     aggregate.files++;
@@ -448,7 +494,7 @@ function string(value: unknown, label: string): string {
 function githubName(value: unknown, label: string, max = 39, allowPunctuation = false): string {
   const result = string(value, label);
   const pattern = allowPunctuation ? /^[A-Za-z0-9._-]+$/ : /^[A-Za-z0-9-]+$/;
-  if (result.length > max || !pattern.test(result)) {
+  if (result.length > max || !pattern.test(result) || (allowPunctuation && (result === '.' || result === '..'))) {
     throw new ApiFailure(502, 'invalid_upstream_response', `GitHub returned invalid ${label}.`);
   }
   return result;

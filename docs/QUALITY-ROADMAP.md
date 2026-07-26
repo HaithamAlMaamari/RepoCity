@@ -23,11 +23,12 @@ Completed evidence:
 - Initial unit suite, Worker deployment dry run, real GitHub cache MISS/HIT smoke test, desktop browser smoke, and mobile visual check pass.
 - Least-privilege GitHub Actions gate added for locked install, tests, typechecks, production build, dependency audit, deployment dry run, and tracked-file drift.
 - Commit-and-URL-seed scene streams now reproduce stars, ground traffic, aerial traffic, and particles without freezing animation playback.
+- Worker transport tests now cover malformed and oversized bodies, bounded redirects, rate limits, retries, cancellation, timeout precedence, traversal budgets, and invalid trees; isolated Workerd tests cover bindings, request signals, streams, and Cache API MISS/HIT behavior.
 
 Still required before Phase 1 exits:
 
 - Cloudflare production account, custom domain, encrypted `GITHUB_TOKEN`, rate-limiting policy, and deployed cache validation.
-- Broader malformed-response, traversal-budget, timeout, redirect, and Worker-runtime integration tests.
+- Depth and maximum-entry boundary fixtures plus broader shared-contract invariant coverage.
 
 ## Product Model
 

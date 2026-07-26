@@ -36,6 +36,8 @@ npm run deploy:check
 
 `npm run ci` reproduces the GitHub Actions release gate: tests, both TypeScript targets, production build, high-severity dependency audit, and Cloudflare deployment dry run. CI also rejects checks that modify tracked files.
 
+`npm test` runs fast Node unit tests plus an isolated Workerd suite that validates Worker bindings, request signals, streamed body limits, and immutable Cache API behavior without production credentials or external network access.
+
 Browser-audit tooling is project-scoped and restricted to isolated profiles and an explicit network allowlist. Restart OpenCode after changing `opencode.jsonc` or files under `.opencode/`.
 
 ## Data And Security
