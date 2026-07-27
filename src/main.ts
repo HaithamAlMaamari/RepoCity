@@ -27,8 +27,9 @@ import { createFlythrough } from './core/camera';
 import type { Flythrough } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
-import { buildExplorerModel, visibleExplorerNodes } from './explore/explorer-model';
-import type { ExplorerModel, ExplorerNode } from './explore/explorer-model';
+import type { SceneHashState } from './core/url-state';
+import { buildExplorerModel, deriveExplorerView, visibleExplorerNodes } from './explore/explorer-model';
+import type { ExplorerFilterState, ExplorerModel, ExplorerNode, ExplorerView } from './explore/explorer-model';
 import {
   buildSky, buildAtmosphere, buildStreetNetwork,
   buildTraffic, buildFlyingTraffic, buildEmbers, buildBillboards,
@@ -73,6 +74,12 @@ const selectionStatusEl = document.getElementById('selection-status')!;
 const focusBuildingEl = document.getElementById('focus-building') as HTMLButtonElement;
 const copyPathEl = document.getElementById('copy-path') as HTMLButtonElement;
 const openFileEl = document.getElementById('open-file') as HTMLAnchorElement;
+const explorerQueryEl = document.getElementById('explorer-query') as HTMLInputElement;
+const explorerLanguageEl = document.getElementById('explorer-language') as HTMLSelectElement;
+const explorerSizeEl = document.getElementById('explorer-size') as HTMLSelectElement;
+const explorerSortEl = document.getElementById('explorer-sort') as HTMLSelectElement;
+const explorerResultsEl = document.getElementById('explorer-results')!;
+const explorerBreadcrumbsEl = document.getElementById('explorer-breadcrumbs')!;
 const mobileExplorerMedia = window.matchMedia('(max-width: 720px)');
 let explorerUserToggled = false;
 syncExplorerForViewport();
@@ -100,6 +107,9 @@ let activeLoadController: AbortController | null = null;
 let loadSequence = 0;
 let activeSceneSeed = DEFAULT_SCENE_SEED;
 let explorerModel: ExplorerModel | null = null;
+let explorerView: ExplorerView | null = null;
+let explorerState: ExplorerFilterState = { query: '', language: '', size: 'all', sort: 'layout' };
+let explorerQueryTimer = 0;
 const expandedPaths = new Set<string>();
 let activeTreePath = '';
 let selectedBuildingId = -1;
@@ -225,11 +235,17 @@ async function init(): Promise<void> {
   repoTreeEl.addEventListener('click', handleTreeClick);
   focusBuildingEl.addEventListener('click', focusSelectedBuilding);
   copyPathEl.addEventListener('click', copySelectedPath);
+  explorerQueryEl.addEventListener('input', handleExplorerQueryInput);
+  explorerLanguageEl.addEventListener('change', readExplorerControls);
+  explorerSizeEl.addEventListener('change', readExplorerControls);
+  explorerSortEl.addEventListener('change', readExplorerControls);
+  explorerBreadcrumbsEl.addEventListener('click', handleBreadcrumbClick);
 
   renderer.setAnimationLoop(animate);
   setStatus('ready.');
 
   const initial = parseSceneHash(window.location.hash) ?? { repo: repoInput.value, seed: DEFAULT_SCENE_SEED };
+  setExplorerStateFromHash(initial);
   repoInput.value = initial.repo;
   await loadRepo(initial.repo, initial.commit, initial.seed, initial.file, 'replace');
 }
@@ -247,7 +263,7 @@ async function handleGo(): Promise<void> {
     setStatus('format: owner/repo', true);
     return;
   }
-  await loadRepo(repo, undefined, DEFAULT_SCENE_SEED, undefined, 'push');
+  await loadRepo(repo, undefined, DEFAULT_SCENE_SEED, undefined, 'push', undefined, { repo, seed: DEFAULT_SCENE_SEED });
 }
 
 async function loadRepo(
@@ -257,6 +273,7 @@ async function loadRepo(
   requestedFile?: string,
   historyMode: 'push' | 'replace' | 'none' = 'none',
   resolvedResult?: FetchResult,
+  requestedExplorerState?: SceneHashState,
 ): Promise<void> {
   const [owner, repoName] = repo.split('/');
   if (!owner || !repoName) return;
@@ -372,11 +389,14 @@ async function loadRepo(
 
     activeResult = result;
     activeSceneSeed = sceneSeed;
+    if (requestedExplorerState) setExplorerStateFromHash(requestedExplorerState);
     repoInput.value = result.repository.fullName;
     renderExplorer(result, cityData.buildings);
-    const requestedId = requestedFile ? explorerModel?.buildingIdByPath.get(requestedFile) : undefined;
+    const candidateId = requestedFile ? explorerModel?.buildingIdByPath.get(requestedFile) : undefined;
+    const requestedId = candidateId !== undefined && explorerView?.matchMask[candidateId] === 1 ? candidateId : undefined;
     if (requestedId !== undefined) selectBuilding(requestedId, { focusCamera: true, updateUrl: false, announce: false });
-    updateHash(result, sceneSeed, requestedId === undefined ? undefined : requestedFile, historyMode);
+    const resolvedHistoryMode = historyMode === 'none' && requestedFile && requestedId === undefined ? 'replace' : historyMode;
+    updateHash(result, sceneSeed, requestedId === undefined ? undefined : requestedFile, resolvedHistoryMode);
     updateStats(result, cityData.buildings);
     sidebarEl.classList.add('visible');
     captureBtn.disabled = false;
@@ -406,7 +426,10 @@ function handleHashChange(): void {
   if (!state) return;
   const sameRevision = activeResult?.repository.fullName === state.repo && activeResult.revision.commitSha === state.commit;
   if (sameRevision && activeSceneSeed === state.seed) {
-    const id = state.file ? explorerModel?.buildingIdByPath.get(state.file) : undefined;
+    setExplorerStateFromHash(state);
+    applyExplorerFilters(false);
+    const candidateId = state.file ? explorerModel?.buildingIdByPath.get(state.file) : undefined;
+    const id = candidateId !== undefined && explorerView?.matchMask[candidateId] === 1 ? candidateId : undefined;
     if (id === undefined) {
       clearSelection(true);
       if (state.file) selectionStatusEl.textContent = 'The requested file is not rendered in this city.';
@@ -415,7 +438,7 @@ function handleHashChange(): void {
     return;
   }
   repoInput.value = state.repo;
-  void loadRepo(state.repo, state.commit, state.seed, state.file, state.commit ? 'none' : 'replace', sameRevision ? activeResult ?? undefined : undefined);
+  void loadRepo(state.repo, state.commit, state.seed, state.file, state.commit ? 'none' : 'replace', sameRevision ? activeResult ?? undefined : undefined, state);
 }
 
 function updateHash(result: FetchResult, sceneSeed: string, file: string | undefined, mode: 'push' | 'replace' | 'none'): void {
@@ -425,6 +448,7 @@ function updateHash(result: FetchResult, sceneSeed: string, file: string | undef
     commit: result.revision.commitSha,
     seed: sceneSeed,
     file,
+    ...explorerHashState(),
   });
   const url = `${window.location.pathname}${window.location.search}#${hash}`;
   if (mode === 'push') history.pushState(null, '', url);
@@ -447,6 +471,7 @@ function teardown(): void {
   setHovered(-1);
   selectedBuildingId = -1;
   explorerModel = null;
+  explorerView = null;
   expandedPaths.clear();
   repoTreeEl.replaceChildren();
   explorerCoverageEl.textContent = 'Load a repository to inspect its rendered files.';
@@ -501,7 +526,10 @@ function pick(event: { clientX: number; clientY: number }): number {
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObject(cityData.mesh);
-  return hits.length > 0 && hits[0].instanceId !== undefined ? hits[0].instanceId : -1;
+  for (const hit of hits) {
+    if (hit.instanceId !== undefined && explorerView?.matchMask[hit.instanceId] === 1) return hit.instanceId;
+  }
+  return -1;
 }
 
 function handlePointerMove(e: PointerEvent): void {
@@ -584,16 +612,80 @@ function syncExplorerForViewport(): void {
 
 function renderExplorer(result: FetchResult, buildings: Building[]): void {
   explorerModel = buildExplorerModel(result, buildings);
+  const languages = [...new Set(buildings.map((building) => building.language))].sort();
+  explorerLanguageEl.replaceChildren(new Option('all', ''), ...languages.map((language) => new Option(languageDisplayName(language), language)));
+  if (explorerState.language && !languages.includes(explorerState.language)) {
+    explorerLanguageEl.add(new Option(`${languageDisplayName(explorerState.language)} (0 rendered)`, explorerState.language));
+  }
+  explorerLanguageEl.value = explorerState.language;
   expandedPaths.clear();
   activeTreePath = explorerModel.roots[0]?.path ?? '';
   explorerCoverageEl.textContent = explorerModel.coverageText;
   treeEmptyEl.hidden = buildings.length > 0;
+  applyExplorerFilters(false);
+}
+
+function readExplorerControls(): void {
+  explorerState = {
+    query: explorerQueryEl.value,
+    language: explorerLanguageEl.value,
+    size: explorerSizeEl.value as ExplorerFilterState['size'],
+    sort: explorerSortEl.value as ExplorerFilterState['sort'],
+  };
+  applyExplorerFilters(true);
+  replaceSelectionHash(selectedBuildingId >= 0 ? cityData?.buildings[selectedBuildingId]?.path : undefined);
+}
+
+function handleExplorerQueryInput(): void {
+  window.clearTimeout(explorerQueryTimer);
+  explorerQueryTimer = window.setTimeout(readExplorerControls, 120);
+}
+
+function setExplorerStateFromHash(state: SceneHashState): void {
+  explorerState = { query: state.q ?? '', language: state.lang ?? '', size: state.size ?? 'all', sort: state.sort ?? 'layout' };
+  explorerQueryEl.value = explorerState.query;
+  explorerLanguageEl.value = explorerState.language;
+  explorerSizeEl.value = explorerState.size;
+  explorerSortEl.value = explorerState.sort;
+}
+
+function explorerHashState(): Pick<SceneHashState, 'q' | 'lang' | 'size' | 'sort'> {
+  return {
+    q: explorerState.query.trim() || undefined,
+    lang: explorerState.language || undefined,
+    size: explorerState.size === 'all' ? undefined : explorerState.size,
+    sort: explorerState.sort === 'layout' ? undefined : explorerState.sort,
+  };
+}
+
+function applyExplorerFilters(announce: boolean): void {
+  if (!explorerModel || !cityData) return;
+  explorerView = deriveExplorerView(explorerModel, explorerState);
+  cityData.setMatchMask(explorerView.matchMask);
+  const filtering = explorerView.matchingFiles !== cityData.buildings.length;
+  cityData.details.setMatchMask(explorerView.matchMask);
+  rooftops?.setMatchMask(explorerView.matchMask);
+  if (billboards) billboards.group.visible = !filtering;
+  if (selectedBuildingId >= 0 && explorerView.matchMask[selectedBuildingId] !== 1) clearSelection(true);
+  setHovered(-1);
+  const total = cityData.buildings.length;
+  explorerResultsEl.textContent = `${explorerView.matchingFiles.toLocaleString()} matching rendered file${explorerView.matchingFiles === 1 ? '' : 's'} of ${total.toLocaleString()}.`;
+  treeEmptyEl.hidden = explorerView.matchingFiles > 0;
+  treeEmptyEl.textContent = filtering ? 'No rendered files match these filters.' : 'No files are rendered for this repository.';
+  const containsPath = (nodes: readonly ExplorerNode[]): boolean => nodes.some((node) => node.path === activeTreePath || containsPath(node.children));
+  activeTreePath = containsPath(explorerView.roots) ? activeTreePath : explorerView.roots[0]?.path ?? '';
+  if (explorerState.query.trim()) {
+    const expand = (nodes: readonly ExplorerNode[]) => nodes.forEach((node) => { if (node.type === 'directory') { expandedPaths.add(node.path); expand(node.children); } });
+    expand(explorerView.roots);
+  }
   renderExplorerTree();
+  renderBreadcrumbs();
+  void announce;
 }
 
 function renderExplorerTree(): void {
   repoTreeEl.replaceChildren();
-  if (!explorerModel) return;
+  if (!explorerView) return;
   const appendNodes = (parent: HTMLElement, nodes: readonly ExplorerNode[], level: number) => {
     for (const node of nodes) {
       const item = document.createElement('li');
@@ -636,12 +728,12 @@ function renderExplorerTree(): void {
       parent.appendChild(item);
     }
   };
-  appendNodes(repoTreeEl, explorerModel.roots, 1);
+  appendNodes(repoTreeEl, explorerView.roots, 1);
 }
 
 function handleTreeKeydown(event: KeyboardEvent): void {
-  if (!explorerModel) return;
-  const visible = visibleExplorerNodes(explorerModel.roots, expandedPaths);
+  if (!explorerView) return;
+  const visible = visibleExplorerNodes(explorerView.roots, expandedPaths);
   let index = visible.findIndex((node) => node.path === activeTreePath);
   if (index < 0) index = 0;
   const node = visible[index];
@@ -672,14 +764,15 @@ function handleTreeKeydown(event: KeyboardEvent): void {
 
 function handleTreeClick(event: MouseEvent): void {
   const row = (event.target as Element).closest<HTMLElement>('[role="treeitem"]');
-  if (!row || !explorerModel) return;
+  if (!row || !explorerView) return;
   activeTreePath = row.dataset.path ?? '';
-  const node = visibleExplorerNodes(explorerModel.roots, expandedPaths).find((item) => item.path === activeTreePath);
+  const node = visibleExplorerNodes(explorerView.roots, expandedPaths).find((item) => item.path === activeTreePath);
   if (!node) return;
   if (node.type === 'directory') {
     if (expandedPaths.has(node.path)) expandedPaths.delete(node.path); else expandedPaths.add(node.path);
     renderExplorerTree();
     focusActiveTreeItem();
+    renderBreadcrumbs();
   } else if (node.buildingId !== undefined) {
     selectBuilding(node.buildingId, { focusCamera: true, updateUrl: true, announce: true });
     focusActiveTreeItem();
@@ -691,6 +784,7 @@ function moveTreeFocus(path: string): void {
   for (const row of rows) row.tabIndex = row.dataset.path === path ? 0 : -1;
   activeTreePath = path;
   rows.find((row) => row.dataset.path === path)?.focus();
+  renderBreadcrumbs();
 }
 
 function focusActiveTreeItem(): void {
@@ -709,6 +803,41 @@ function revealTreePath(path: string): void {
   if (changed) renderExplorerTree();
   const row = [...repoTreeEl.querySelectorAll<HTMLElement>('.tree-row')].find((item) => item.dataset.path === path);
   row?.scrollIntoView({ block: 'nearest' });
+  renderBreadcrumbs();
+}
+
+function renderBreadcrumbs(): void {
+  explorerBreadcrumbsEl.replaceChildren();
+  const segments = activeTreePath.split('/').filter(Boolean);
+  let path = '';
+  const root = document.createElement('button');
+  root.type = 'button';
+  root.dataset.path = '';
+  root.textContent = 'root';
+  explorerBreadcrumbsEl.appendChild(root);
+  for (const segment of segments) {
+    path = path ? `${path}/${segment}` : segment;
+    const crumb = document.createElement('button');
+    crumb.type = 'button';
+    crumb.dataset.path = path;
+    crumb.textContent = segment;
+    explorerBreadcrumbsEl.appendChild(crumb);
+  }
+  explorerBreadcrumbsEl.scrollLeft = explorerBreadcrumbsEl.scrollWidth;
+}
+
+function handleBreadcrumbClick(event: MouseEvent): void {
+  const button = (event.target as Element).closest<HTMLButtonElement>('button[data-path]');
+  if (!button || !explorerView) return;
+  const path = button.dataset.path ?? '';
+  activeTreePath = path || explorerView.roots[0]?.path || '';
+  if (path) {
+    const segments = path.split('/');
+    for (let index = 1; index <= segments.length; index++) expandedPaths.add(segments.slice(0, index).join('/'));
+  }
+  renderExplorerTree();
+  focusActiveTreeItem();
+  renderBreadcrumbs();
 }
 
 function updateTreeSelection(): void {
@@ -725,6 +854,7 @@ function replaceSelectionHash(path: string | undefined): void {
     commit: activeResult.revision.commitSha,
     seed: activeSceneSeed,
     file: path,
+    ...explorerHashState(),
   });
   history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${hash}`);
 }
@@ -862,7 +992,10 @@ async function capturePoster(): Promise<void> {
     ctx.font = '500 18px "JetBrains Mono", monospace';
     const revision = activeResult?.revision.commitSha.slice(0, 12) ?? 'unknown';
     const coverage = activeResult?.coverage.selection === 'sampled' ? 'sampled' : 'complete';
-    ctx.fillText(`${cityData?.buildings.length ?? 0} buildings · ${coverage} · ${revision} · seed ${activeSceneSeed}`, 80, H - 110);
+    const rendered = cityData?.buildings.length ?? 0;
+    const visible = explorerView?.matchingFiles ?? rendered;
+    const buildingLabel = visible === rendered ? `${rendered} buildings` : `${visible} matching of ${rendered} rendered buildings`;
+    ctx.fillText(`${buildingLabel} · ${coverage} · ${revision} · seed ${activeSceneSeed}`, 80, H - 110);
 
     out.toBlob((blob) => {
       if (!blob) {
@@ -910,7 +1043,7 @@ function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB'];
   const i = Math.min(Math.floor(Math.log10(bytes) / 3), 3);
-  return `${(bytes / Math.pow(1000, i)).toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
+  return `${(bytes / Math.pow(1000, i)).toFixed(i === 0 ? 0 : 2)} ${u[i]}`;
 }
 function rgbToHex(r: number, g: number, b: number): string {
   const c = (n: number) => Math.max(0, Math.min(255, Math.round(n * 255))).toString(16).padStart(2, '0');

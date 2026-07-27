@@ -13,10 +13,12 @@ import type { Building } from './city';
 
 export interface ArchitectureDetails {
   group: THREE.Group;
+  setMatchMask(mask: Uint8Array): void;
   dispose(): void;
 }
 
 interface InstanceSpec {
+  ownerId: number;
   x: number;
   y: number;
   z: number;
@@ -37,8 +39,10 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
   const crowns: InstanceSpec[] = [];
   const spires: InstanceSpec[] = [];
   const strips: StripSpec[] = [];
+  const maskUpdaters: ((mask: Uint8Array) => void)[] = [];
 
-  for (const b of buildings) {
+  for (let ownerId = 0; ownerId < buildings.length; ownerId++) {
+    const b = buildings[ownerId];
     const total = b.totalHeight;
     const baseY = b.position[1] - b.scale[1] / 2;
     const w = b.scale[0];
@@ -46,23 +50,23 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
 
     if (b.profile === 'setback') {
       const y = baseY + b.scale[1];
-      ledges.push({ x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
-      crowns.push({ x: b.position[0], y: baseY + total * 0.86, z: b.position[2], sx: w * 0.62, sy: total * 0.28, sz: d * 0.62 });
-      addStrips(strips, b, baseY + total * 0.86, w * 0.62, d * 0.62);
+      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
+      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.86, z: b.position[2], sx: w * 0.62, sy: total * 0.28, sz: d * 0.62 });
+      addStrips(strips, b, ownerId, baseY + total * 0.86, w * 0.62, d * 0.62);
     } else if (b.profile === 'tower') {
       const y = baseY + b.scale[1];
-      ledges.push({ x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
-      crowns.push({ x: b.position[0], y: baseY + total * 0.89, z: b.position[2], sx: w * 0.42, sy: total * 0.18, sz: d * 0.42 });
-      addStrips(strips, b, baseY + total * 0.89, w * 0.42, d * 0.42);
-      spires.push({ x: b.position[0], y: baseY + total * 0.98, z: b.position[2], sx: Math.max(w * 0.06, 0.16), sy: total * 0.14, sz: Math.max(d * 0.06, 0.16) });
+      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
+      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.89, z: b.position[2], sx: w * 0.42, sy: total * 0.18, sz: d * 0.42 });
+      addStrips(strips, b, ownerId, baseY + total * 0.89, w * 0.42, d * 0.42);
+      spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.98, z: b.position[2], sx: Math.max(w * 0.06, 0.16), sy: total * 0.14, sz: Math.max(d * 0.06, 0.16) });
     } else if (b.profile === 'mega') {
-      podiums.push({ x: b.position[0], y: baseY + 0.20, z: b.position[2], sx: w * 1.12, sy: 0.40, sz: d * 1.12 });
-      ledges.push({ x: b.position[0], y: baseY + b.scale[1], z: b.position[2], sx: w * 1.05, sy: 0.22, sz: d * 1.05 });
-      crowns.push({ x: b.position[0], y: baseY + total * 0.66, z: b.position[2], sx: w * 0.68, sy: total * 0.28, sz: d * 0.68 });
-      addStrips(strips, b, baseY + total * 0.66, w * 0.68, d * 0.68);
-      crowns.push({ x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
-      addStrips(strips, b, baseY + total * 0.885, w * 0.44, d * 0.44);
-      spires.push({ x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
+      podiums.push({ ownerId, x: b.position[0], y: baseY + 0.20, z: b.position[2], sx: w * 1.12, sy: 0.40, sz: d * 1.12 });
+      ledges.push({ ownerId, x: b.position[0], y: baseY + b.scale[1], z: b.position[2], sx: w * 1.05, sy: 0.22, sz: d * 1.05 });
+      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.66, z: b.position[2], sx: w * 0.68, sy: total * 0.28, sz: d * 0.68 });
+      addStrips(strips, b, ownerId, baseY + total * 0.66, w * 0.68, d * 0.68);
+      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
+      addStrips(strips, b, ownerId, baseY + total * 0.885, w * 0.44, d * 0.44);
+      spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
     }
   }
 
@@ -88,14 +92,15 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
     emissiveIntensity: 0.3,
   });
 
-  addBoxes(group, podiums, bodyMaterial, disposables);
-  addBoxes(group, ledges, bodyMaterial, disposables);
-  addBoxes(group, crowns, upperMaterial, disposables);
-  addSpires(group, spires, spireMaterial, disposables);
-  addStripsMesh(group, strips, disposables);
+  addBoxes(group, podiums, bodyMaterial, disposables, maskUpdaters);
+  addBoxes(group, ledges, bodyMaterial, disposables, maskUpdaters);
+  addBoxes(group, crowns, upperMaterial, disposables, maskUpdaters);
+  addSpires(group, spires, spireMaterial, disposables, maskUpdaters);
+  addStripsMesh(group, strips, disposables, maskUpdaters);
 
   return {
     group,
+    setMatchMask(mask) { for (const update of maskUpdaters) update(mask); },
     dispose() {
       for (const disposable of disposables) disposable.dispose();
     },
@@ -107,6 +112,7 @@ function addBoxes(
   specs: InstanceSpec[],
   material: THREE.MeshStandardMaterial,
   disposables: { dispose(): void }[],
+  maskUpdaters: ((mask: Uint8Array) => void)[],
 ): void {
   if (specs.length === 0) return;
   const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -126,6 +132,7 @@ function addBoxes(
   // The material is shared by all boxes in this layer and disposed once by
   // the caller's disposable list.
   if (!disposables.includes(material)) disposables.push(material);
+  maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
 
 function addSpires(
@@ -133,6 +140,7 @@ function addSpires(
   specs: InstanceSpec[],
   material: THREE.MeshStandardMaterial,
   disposables: { dispose(): void }[],
+  maskUpdaters: ((mask: Uint8Array) => void)[],
 ): void {
   if (specs.length === 0) return;
   const geometry = new THREE.CylinderGeometry(0.5, 0.9, 1, 6);
@@ -151,11 +159,13 @@ function addSpires(
   group.add(mesh);
   disposables.push(geometry);
   if (!disposables.includes(material)) disposables.push(material);
+  maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
 
 function addStrips(
   target: StripSpec[],
   b: Building,
+  ownerId: number,
   y: number,
   width: number,
   depth: number,
@@ -164,10 +174,10 @@ function addStrips(
   const z = depth / 2 + 0.025;
   const x = width / 2 + 0.025;
   target.push(
-    { x: b.position[0], y, z: b.position[2] - z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
-    { x: b.position[0], y, z: b.position[2] + z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
-    { x: b.position[0] - x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
-    { x: b.position[0] + x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+    { ownerId, x: b.position[0], y, z: b.position[2] - z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { ownerId, x: b.position[0], y, z: b.position[2] + z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { ownerId, x: b.position[0] - x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+    { ownerId, x: b.position[0] + x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
   );
 }
 
@@ -175,6 +185,7 @@ function addStripsMesh(
   group: THREE.Group,
   specs: StripSpec[],
   disposables: { dispose(): void }[],
+  maskUpdaters: ((mask: Uint8Array) => void)[],
 ): void {
   if (specs.length === 0) return;
   const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -203,4 +214,17 @@ function addStripsMesh(
   mesh.renderOrder = 2;
   group.add(mesh);
   disposables.push(geometry, material);
+  maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
+}
+
+function updateMatrices(mesh: THREE.InstancedMesh, specs: InstanceSpec[], mask: Uint8Array): void {
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i];
+    dummy.position.set(spec.x, spec.y, spec.z);
+    dummy.scale.set(spec.sx, mask[spec.ownerId] === 1 ? spec.sy : 0, spec.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
 }

@@ -12,11 +12,13 @@ import { signHash } from './city';
 
 export interface Rooftops {
   group: THREE.Group;
+  setMatchMask(mask: Uint8Array): void;
   update(dt: number): void;
   dispose(): void;
 }
 
 interface BeaconSpec {
+  ownerId: number;
   x: number; y: number; z: number;
   base: THREE.Color;
   rate: number;
@@ -30,7 +32,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
   /* ---- pick tall buildings ---- */
   const tallThreshold = maxHeight * 0.30;
   const specs: BeaconSpec[] = [];
-  const pylons: { x: number; y: number; z: number; h: number }[] = [];
+  const pylons: { ownerId: number; x: number; y: number; z: number; h: number }[] = [];
 
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
@@ -43,7 +45,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
     const roofY = b.position[1] - b.scale[1] / 2 + b.totalHeight;
     const pylonH = 1.2 + signHash(i * 19 + 11) * 3.4;
 
-    pylons.push({ x: b.position[0] + ox, y: roofY, z: b.position[2] + oz, h: pylonH });
+    pylons.push({ ownerId: i, x: b.position[0] + ox, y: roofY, z: b.position[2] + oz, h: pylonH });
 
     // ~80% of pylons get a blinking beacon
     if (signHash(i * 29 + 5) > 0.2) {
@@ -53,6 +55,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
       else if (hue < 0.85) c.setRGB(0.1, 0.85, 1.1);   // cyan
       else c.setRGB(1.0, 0.65, 0.2);                    // amber
       specs.push({
+        ownerId: i,
         x: b.position[0] + ox,
         y: roofY + pylonH + 0.15,
         z: b.position[2] + oz,
@@ -64,25 +67,26 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
   }
 
   /* ---- pylon mesh (static) ---- */
+  let pylonMesh: THREE.InstancedMesh | null = null;
   if (pylons.length > 0) {
     const pyGeo = new THREE.CylinderGeometry(0.03, 0.08, 1, 5);
     pyGeo.translate(0, 0.5, 0);
     const pyMat = new THREE.MeshStandardMaterial({
       color: 0x0a0a16, roughness: 0.5, metalness: 0.7,
     });
-    const pyMesh = new THREE.InstancedMesh(pyGeo, pyMat, pylons.length);
-    pyMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    pylonMesh = new THREE.InstancedMesh(pyGeo, pyMat, pylons.length);
+    pylonMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     const d = new THREE.Object3D();
     for (let i = 0; i < pylons.length; i++) {
       const p = pylons[i];
       d.position.set(p.x, p.y, p.z);
       d.scale.set(1, p.h, 1);
       d.updateMatrix();
-      pyMesh.setMatrixAt(i, d.matrix);
+      pylonMesh.setMatrixAt(i, d.matrix);
     }
-    pyMesh.instanceMatrix.needsUpdate = true;
-    pyMesh.frustumCulled = false;
-    group.add(pyMesh);
+    pylonMesh.instanceMatrix.needsUpdate = true;
+    pylonMesh.frustumCulled = false;
+    group.add(pylonMesh);
     disposables.push(pyGeo, pyMat);
   }
 
@@ -96,7 +100,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
       vertexColors: true,
     });
     beaconMesh = new THREE.InstancedMesh(bGeo, bMat, specs.length);
-    beaconMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    beaconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     const d = new THREE.Object3D();
     const c = new THREE.Color();
     for (let i = 0; i < specs.length; i++) {
@@ -135,6 +139,29 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
 
   return {
     group,
+    setMatchMask(mask) {
+      const d = new THREE.Object3D();
+      if (pylonMesh) {
+        for (let i = 0; i < pylons.length; i++) {
+          const p = pylons[i];
+          d.position.set(p.x, p.y, p.z);
+          d.scale.set(1, mask[p.ownerId] === 1 ? p.h : 0, 1);
+          d.updateMatrix();
+          pylonMesh.setMatrixAt(i, d.matrix);
+        }
+        pylonMesh.instanceMatrix.needsUpdate = true;
+      }
+      if (beaconMesh) {
+        for (let i = 0; i < specs.length; i++) {
+          const s = specs[i];
+          d.position.set(s.x, s.y, s.z);
+          d.scale.setScalar(mask[s.ownerId] === 1 ? 1 : 0);
+          d.updateMatrix();
+          beaconMesh.setMatrixAt(i, d.matrix);
+        }
+        beaconMesh.instanceMatrix.needsUpdate = true;
+      }
+    },
     update,
     dispose() { for (const x of disposables) x.dispose(); },
   };

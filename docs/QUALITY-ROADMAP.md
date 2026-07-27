@@ -27,6 +27,7 @@ Completed evidence:
 - The browser contract now rejects inconsistent identities, policies, modes, paths, hierarchies, counts, and language totals; traversal fixtures cover depth and entry boundaries, missing parents, duplicate paths, empty trees, and zero-byte files.
 - A formal threat model now records trust boundaries and residual risks; mandatory actor and global Cloudflare rate-limit bindings fail closed and are exercised with real Workerd counters.
 - Explore mode now includes a truthful persistent legend, accessible keyboard directory tree, synchronized canvas/file selection, camera focus, immutable GitHub links, path copy, rendered-coverage disclosure, shareable selected-file state, and a responsive mobile sheet.
+- Rendered-file search, language and non-overlapping size filters, deterministic sorting, breadcrumbs, canonical filter URLs, and complete masked building silhouettes are synchronized across the index, canvas, picking, and poster metadata.
 
 Still required before Phase 1 exits:
 

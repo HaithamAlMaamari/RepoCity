@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Building } from '../city/city';
 import type { FetchResult } from '../data/github';
-import { buildExplorerModel, visibleExplorerNodes } from './explorer-model';
+import { buildExplorerModel, deriveExplorerView, visibleExplorerNodes } from './explorer-model';
 
 function fixture(): FetchResult {
   return {
@@ -47,5 +47,36 @@ describe('rendered-file explorer model', () => {
     complete.selection.returnedFiles = 3;
     complete.totals.files = 100;
     expect(buildExplorerModel(complete, [building('README.md')]).coverageText).toContain('3 selected from 100');
+  });
+
+  it('filters rendered paths while preserving ancestors and canonical building IDs', () => {
+    const model = buildExplorerModel(fixture(), [building('README.md'), building('src/a.ts'), building('src/hidden.ts')]);
+    const view = deriveExplorerView(model, { query: 'src/a', language: 'typescript', size: 'tiny', sort: 'name' });
+
+    expect(view.roots.map((node) => node.path)).toEqual(['src']);
+    expect(view.roots[0].children.map((node) => node.path)).toEqual(['src/a.ts']);
+    expect([...view.matchMask]).toEqual([0, 1, 0]);
+    expect(view.matchingFiles).toBe(1);
+  });
+
+  it('sorts copied views without changing the canonical model order', () => {
+    const model = buildExplorerModel(fixture(), [building('README.md'), building('src/a.ts'), building('src/hidden.ts')]);
+    const view = deriveExplorerView(model, { query: '', language: '', size: 'all', sort: 'size-desc' });
+
+    expect(view.roots.map((node) => node.path)).toEqual(['src', 'README.md']);
+    expect(view.roots[0].children.map((node) => node.path)).toEqual(['src/a.ts', 'src/hidden.ts']);
+    expect(model.roots.map((node) => node.path)).toEqual(['src', 'README.md']);
+  });
+
+  it('uses non-overlapping decimal size boundaries', () => {
+    const sizes = [9_999, 10_000, 99_999, 100_000, 999_999, 1_000_000];
+    const result = fixture();
+    result.root.children = sizes.map((size) => ({ name: `${size}.bin`, path: `${size}.bin`, type: 'file', size, language: 'binary', children: [] }));
+    result.selection.returnedFiles = sizes.length;
+    result.totals.files = sizes.length;
+    const model = buildExplorerModel(result, sizes.map((size) => building(`${size}.bin`)));
+    const count = (size: 'tiny' | 'small' | 'medium' | 'large') => deriveExplorerView(model, { query: '', language: '', size, sort: 'layout' }).matchingFiles;
+
+    expect([count('tiny'), count('small'), count('medium'), count('large')]).toEqual([1, 2, 2, 1]);
   });
 });

@@ -38,6 +38,7 @@ export interface CityData {
   update(dt: number): void;
   setHovered(id: number): void;
   setSelected(id: number): void;
+  setMatchMask(mask: Uint8Array): void;
   dispose(): void;
 }
 
@@ -53,10 +54,12 @@ attribute float aId;
 attribute float aTint;
 attribute float aLit;
 attribute vec3 aBase;
+attribute float aMatch;
 varying float vId;
 varying float vTint;
 varying float vLit;
 varying vec3 vBase;
+varying float vMatch;
 varying vec3 vWP;
 varying vec3 vLP;
 varying vec3 vN;
@@ -72,6 +75,7 @@ const VERT_ASSIGN = /* glsl */ `
   vTint = aTint;
   vLit = aLit;
   vBase = aBase;
+  vMatch = aMatch;
 }
 #include <fog_vertex>
 `;
@@ -83,6 +87,7 @@ varying float vId;
 varying float vTint;
 varying float vLit;
 varying vec3 vBase;
+varying float vMatch;
 varying vec3 vWP;
 varying vec3 vLP;
 varying vec3 vN;
@@ -95,6 +100,7 @@ float rcHash( float n ) { return fract( sin( n ) * 43758.5453 ); }
 
 const FRAG_EMISSIVE = /* glsl */ `
 {
+  if (vMatch < 0.5) discard;
   vec3 N = normalize( vN );
   float sideMask = 1.0 - step( 0.5, abs( N.y ) );
   float topMask = smoothstep( 0.5, 0.8, N.y );
@@ -208,7 +214,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
     return {
       mesh, buildings: [], bounds: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 }, maxHeight: 0,
       details: buildArchitectureDetails([]),
-      update() {}, setHovered() {}, setSelected() {},
+      update() {}, setHovered() {}, setSelected() {}, setMatchMask() {},
       dispose() { g.dispose(); m.dispose(); },
     };
   }
@@ -228,6 +234,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
   const aTint = new Float32Array(n);
   const aLit = new Float32Array(n);
   const aBase = new Float32Array(n * 3);
+  const aMatch = new Float32Array(n).fill(1);
   let maxHeight = 0;
 
   for (let i = 0; i < n; i++) {
@@ -265,6 +272,9 @@ export function buildCity(cells: LayoutCell[]): CityData {
   geo.setAttribute('aTint', new THREE.InstancedBufferAttribute(aTint, 1));
   geo.setAttribute('aLit', new THREE.InstancedBufferAttribute(aLit, 1));
   geo.setAttribute('aBase', new THREE.InstancedBufferAttribute(aBase, 3));
+  const matchAttribute = new THREE.InstancedBufferAttribute(aMatch, 1);
+  matchAttribute.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aMatch', matchAttribute);
 
   /* material with the ONE onBeforeCompile in the app */
   const uniforms: BuildingUniforms = {
@@ -291,7 +301,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
       .replace('#include <common>', '#include <common>\n' + FRAG_DECL)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_EMISSIVE);
   };
-  material.customProgramCacheKey = () => 'repocity-buildings-v1';
+  material.customProgramCacheKey = () => 'repocity-buildings-v2';
 
   const mesh = new THREE.InstancedMesh(geo, material, n);
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -317,6 +327,10 @@ export function buildCity(cells: LayoutCell[]): CityData {
     update(dt: number) { uniforms.uTime.value += dt; },
     setHovered(id: number) { uniforms.uHover.value = id; },
     setSelected(id: number) { uniforms.uSelect.value = id; },
+    setMatchMask(mask: Uint8Array) {
+      for (let i = 0; i < n; i++) aMatch[i] = mask[i] ?? 0;
+      matchAttribute.needsUpdate = true;
+    },
     dispose() { geo.dispose(); material.dispose(); details.dispose(); },
   };
 }

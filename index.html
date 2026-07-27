@@ -394,6 +394,18 @@
       #explore-body { max-height: calc(100dvh - 345px); overflow: auto; overscroll-behavior: contain; }
       .explorer-section { padding: 12px 10px 14px; max-height: min(48vh, 520px); overflow: auto; overscroll-behavior: contain; }
       #explorer-coverage { color: var(--faint); font-size: 10px; line-height: 1.45; margin: 0 6px 10px; }
+      .explorer-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 6px 9px; }
+      .explorer-tools label { color: var(--faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+      .explorer-tools .wide { grid-column: 1 / -1; }
+      .explorer-tools input, .explorer-tools select {
+        width: 100%; min-height: 34px; margin-top: 4px; padding: 6px 8px; box-sizing: border-box;
+        border: 1px solid var(--panel-border); border-radius: 6px; background: rgba(8,6,20,.72); color: var(--ink);
+        font: 10px 'JetBrains Mono', monospace;
+      }
+      #explorer-breadcrumbs { display: flex; gap: 3px; align-items: center; overflow-x: auto; margin: 0 6px 8px; white-space: nowrap; }
+      #explorer-breadcrumbs button { min-height: 28px; padding: 4px 6px; color: var(--dim); border: 0; background: transparent; }
+      #explorer-breadcrumbs button:not(:last-child)::after { content: ' /'; color: var(--faint); }
+      #explorer-results { color: var(--accent); margin: 0 6px 8px; font-size: 10px; }
       #repo-tree, #repo-tree ul { list-style: none; padding: 0; margin: 0; }
       #repo-tree ul { padding-left: 14px; border-left: 1px solid rgba(255,255,255,0.07); }
       .tree-row {
@@ -633,6 +645,14 @@
       <div id="explore-body">
         <nav class="explorer-section" aria-label="Rendered repository files">
           <p id="explorer-coverage">Load a repository to inspect its rendered files.</p>
+          <div class="explorer-tools">
+            <label class="wide">find rendered path<input id="explorer-query" type="search" maxlength="100" autocomplete="off" placeholder="src/components"></label>
+            <label>language<select id="explorer-language"><option value="">all</option></select></label>
+            <label>file size<select id="explorer-size"><option value="all">all</option><option value="tiny">under 10 KB</option><option value="small">10 KB to under 100 KB</option><option value="medium">100 KB to under 1 MB</option><option value="large">1 MB+</option></select></label>
+            <label class="wide">sort<select id="explorer-sort"><option value="layout">city layout</option><option value="name">name</option><option value="size-desc">largest first</option><option value="size-asc">smallest first</option></select></label>
+          </div>
+          <div id="explorer-breadcrumbs" aria-label="Current path"></div>
+          <p id="explorer-results" role="status" aria-live="polite"></p>
           <p id="tree-help" class="sr-only">Use arrow keys to navigate, Right and Left to expand or collapse folders, and Enter or Space to select a file.</p>
           <ul id="repo-tree" role="tree" aria-label="Rendered repository files" aria-describedby="tree-help explorer-coverage"></ul>
           <p id="tree-empty" hidden>No files are rendered for this repository.</p>

@@ -5,6 +5,10 @@ export interface SceneHashState {
   commit?: string;
   seed: string;
   file?: string;
+  q?: string;
+  lang?: string;
+  size?: 'tiny' | 'small' | 'medium' | 'large';
+  sort?: 'name' | 'size-asc' | 'size-desc';
 }
 
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
@@ -26,7 +30,7 @@ export function parseSceneHash(hash: string): SceneHashState | null {
   }
 
   const params = new URLSearchParams(raw);
-  const allowed = new Set(['repo', 'commit', 'seed', 'file']);
+  const allowed = new Set(['repo', 'commit', 'seed', 'file', 'q', 'lang', 'size', 'sort']);
   const seen = new Set<string>();
   for (const key of params.keys()) {
     if (!allowed.has(key) || seen.has(key)) return null;
@@ -37,11 +41,19 @@ export function parseSceneHash(hash: string): SceneHashState | null {
   const commit = params.get('commit') ?? undefined;
   const seed = params.get('seed') ?? DEFAULT_SCENE_SEED;
   const file = params.get('file') ?? undefined;
+  const q = params.get('q') ?? undefined;
+  const lang = params.get('lang') ?? undefined;
+  const size = params.get('size') ?? undefined;
+  const sort = params.get('sort') ?? undefined;
   if (!repo || !isRepository(repo)) return null;
   if (commit !== undefined && !COMMIT_PATTERN.test(commit)) return null;
   if (!SEED_PATTERN.test(seed)) return null;
   if (file !== undefined && !isRepositoryPath(file)) return null;
-  return { repo, commit: commit?.toLowerCase(), seed, file };
+  if (q !== undefined && (!q.trim() || q.length > 100 || /[\u0000-\u001f]/.test(q))) return null;
+  if (lang !== undefined && !/^[a-z0-9._+-]{1,40}$/.test(lang)) return null;
+  if (size !== undefined && !['tiny', 'small', 'medium', 'large'].includes(size)) return null;
+  if (sort !== undefined && !['name', 'size-asc', 'size-desc'].includes(sort)) return null;
+  return { repo, commit: commit?.toLowerCase(), seed, file, q, lang, size: size as SceneHashState['size'], sort: sort as SceneHashState['sort'] };
 }
 
 export function serializeSceneHash(state: SceneHashState): string {
@@ -49,6 +61,10 @@ export function serializeSceneHash(state: SceneHashState): string {
   if (state.commit) params.set('commit', state.commit);
   params.set('seed', state.seed);
   if (state.file) params.set('file', state.file);
+  if (state.q) params.set('q', state.q);
+  if (state.lang) params.set('lang', state.lang);
+  if (state.size) params.set('size', state.size);
+  if (state.sort) params.set('sort', state.sort);
   return params.toString();
 }
 

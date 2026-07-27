@@ -17,6 +17,22 @@ export interface ExplorerModel {
   coverageText: string;
 }
 
+export type ExplorerSort = 'layout' | 'name' | 'size-asc' | 'size-desc';
+export type ExplorerSize = 'all' | 'tiny' | 'small' | 'medium' | 'large';
+
+export interface ExplorerFilterState {
+  query: string;
+  language: string;
+  size: ExplorerSize;
+  sort: ExplorerSort;
+}
+
+export interface ExplorerView {
+  roots: ExplorerNode[];
+  matchMask: Uint8Array;
+  matchingFiles: number;
+}
+
 export function buildExplorerModel(result: FetchResult, buildings: readonly Building[]): ExplorerModel {
   const buildingIdByPath = new Map(buildings.map((building, index) => [building.path, index]));
 
@@ -68,4 +84,41 @@ export function visibleExplorerNodes(roots: readonly ExplorerNode[], expanded: R
   };
   visit(roots);
   return visible;
+}
+
+export function deriveExplorerView(model: ExplorerModel, state: ExplorerFilterState): ExplorerView {
+  const query = state.query.trim().toLowerCase();
+  const matchMask = new Uint8Array(model.buildingIdByPath.size);
+  let matchingFiles = 0;
+
+  const matchesSize = (size: number) => state.size === 'all'
+    || (state.size === 'tiny' && size < 10_000)
+    || (state.size === 'small' && size >= 10_000 && size < 100_000)
+    || (state.size === 'medium' && size >= 100_000 && size < 1_000_000)
+    || (state.size === 'large' && size >= 1_000_000);
+  const compare = (a: ExplorerNode, b: ExplorerNode): number => {
+    const pathOrder = a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    if (state.sort === 'name') return a.name < b.name ? -1 : a.name > b.name ? 1 : pathOrder;
+    if (state.sort === 'size-asc') return a.size - b.size || pathOrder;
+    if (state.sort === 'size-desc') return b.size - a.size || pathOrder;
+    return 0;
+  };
+  const include = (node: ExplorerNode): ExplorerNode | null => {
+    if (node.type === 'file') {
+      const matches = (!query || node.path.toLowerCase().includes(query))
+        && (!state.language || node.language === state.language)
+        && matchesSize(node.size);
+      if (!matches || node.buildingId === undefined) return null;
+      matchMask[node.buildingId] = 1;
+      matchingFiles++;
+      return { ...node, children: [] };
+    }
+    const children = node.children.map(include).filter((child): child is ExplorerNode => child !== null);
+    if (children.length === 0) return null;
+    if (state.sort !== 'layout') children.sort(compare);
+    return { ...node, children };
+  };
+  const roots = model.roots.map(include).filter((node): node is ExplorerNode => node !== null);
+  if (state.sort !== 'layout') roots.sort(compare);
+  return { roots, matchMask, matchingFiles };
 }
