@@ -40,11 +40,16 @@ describe('scene URL state', () => {
   it('round-trips non-default explorer filters with selection state', () => {
     const hash = serializeSceneHash({
       repo: 'octocat/repo', commit: COMMIT, seed: '0', file: 'src/a.ts',
-      q: 'src/a', lang: 'typescript', size: 'small', sort: 'size-desc',
+      q: 'src/a', lang: 'typescript', size: 'small', sort: 'size-desc', district: 'src components',
     });
     expect(parseSceneHash(hash)).toMatchObject({
-      file: 'src/a.ts', q: 'src/a', lang: 'typescript', size: 'small', sort: 'size-desc',
+      file: 'src/a.ts', q: 'src/a', lang: 'typescript', size: 'small', sort: 'size-desc', district: 'src components',
     });
+  });
+
+  it('round-trips the repository-root district sentinel', () => {
+    const hash = serializeSceneHash({ repo: 'octocat/repo', commit: COMMIT, seed: '0', district: '/' });
+    expect(parseSceneHash(hash)?.district).toBe('/');
   });
 
   it('defaults canonical seedless hashes without losing the immutable commit', () => {
@@ -76,6 +81,8 @@ describe('scene URL state', () => {
     '#repo=octocat%2Frepo&seed=0&lang=TypeScript',
     '#repo=octocat%2Frepo&seed=0&size=huge',
     '#repo=octocat%2Frepo&seed=0&sort=random',
+    '#repo=octocat%2Frepo&seed=0&district=src%2Fnested',
+    '#repo=octocat%2Frepo&seed=0&district=..',
   ])('rejects invalid or ambiguous state: %s', (hash) => {
     expect(parseSceneHash(hash)).toBeNull();
   });

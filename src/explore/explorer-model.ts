@@ -14,6 +14,7 @@ export interface ExplorerNode {
 export interface ExplorerModel {
   roots: ExplorerNode[];
   buildingIdByPath: Map<string, number>;
+  districts: { value: string; label: string; files: number }[];
   coverageText: string;
 }
 
@@ -22,6 +23,7 @@ export type ExplorerSize = 'all' | 'tiny' | 'small' | 'medium' | 'large';
 
 export interface ExplorerFilterState {
   query: string;
+  district: string;
   language: string;
   size: ExplorerSize;
   sort: ExplorerSort;
@@ -35,6 +37,12 @@ export interface ExplorerView {
 
 export function buildExplorerModel(result: FetchResult, buildings: readonly Building[]): ExplorerModel {
   const buildingIdByPath = new Map(buildings.map((building, index) => [building.path, index]));
+  const districtCounts = new Map<string, number>();
+  for (const building of buildings) {
+    const slash = building.path.indexOf('/');
+    const district = slash < 0 ? '/' : building.path.slice(0, slash);
+    districtCounts.set(district, (districtCounts.get(district) ?? 0) + 1);
+  }
 
   function include(node: TreeNode): ExplorerNode | null {
     if (node.type === 'file') {
@@ -71,7 +79,9 @@ export function buildExplorerModel(result: FetchResult, buildings: readonly Buil
       ? `${renderedLabel} from the complete repository tree.`
       : `${renderedLabel} of ${selected} selected files from the complete repository tree.`;
 
-  return { roots, buildingIdByPath, coverageText };
+  const districts = [...districtCounts].map(([value, files]) => ({ value, label: value === '/' ? 'repository root' : value, files }));
+  districts.sort((a, b) => a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+  return { roots, buildingIdByPath, districts, coverageText };
 }
 
 export function visibleExplorerNodes(roots: readonly ExplorerNode[], expanded: ReadonlySet<string>): ExplorerNode[] {
@@ -106,6 +116,7 @@ export function deriveExplorerView(model: ExplorerModel, state: ExplorerFilterSt
   const include = (node: ExplorerNode): ExplorerNode | null => {
     if (node.type === 'file') {
       const matches = (!query || node.path.toLowerCase().includes(query))
+        && (!state.district || (state.district === '/' ? !node.path.includes('/') : node.path.startsWith(`${state.district}/`)))
         && (!state.language || node.language === state.language)
         && matchesSize(node.size);
       if (!matches || node.buildingId === undefined) return null;

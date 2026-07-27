@@ -28,6 +28,7 @@ Completed evidence:
 - A formal threat model now records trust boundaries and residual risks; mandatory actor and global Cloudflare rate-limit bindings fail closed and are exercised with real Workerd counters.
 - Explore mode now includes a truthful persistent legend, accessible keyboard directory tree, synchronized canvas/file selection, camera focus, immutable GitHub links, path copy, rendered-coverage disclosure, shareable selected-file state, and a responsive mobile sheet.
 - Rendered-file search, language and non-overlapping size filters, deterministic sorting, breadcrumbs, canonical filter URLs, and complete masked building silhouettes are synchronized across the index, canvas, picking, and poster metadata.
+- Top-level and repository-root district isolation now composes with every rendered-file filter and remains synchronized across the index, complete building silhouettes, picking, selection, poster metadata, and canonical history state.
 
 Still required before Phase 1 exits:
 

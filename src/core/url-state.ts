@@ -9,6 +9,7 @@ export interface SceneHashState {
   lang?: string;
   size?: 'tiny' | 'small' | 'medium' | 'large';
   sort?: 'name' | 'size-asc' | 'size-desc';
+  district?: string;
 }
 
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
@@ -30,7 +31,7 @@ export function parseSceneHash(hash: string): SceneHashState | null {
   }
 
   const params = new URLSearchParams(raw);
-  const allowed = new Set(['repo', 'commit', 'seed', 'file', 'q', 'lang', 'size', 'sort']);
+  const allowed = new Set(['repo', 'commit', 'seed', 'file', 'q', 'lang', 'size', 'sort', 'district']);
   const seen = new Set<string>();
   for (const key of params.keys()) {
     if (!allowed.has(key) || seen.has(key)) return null;
@@ -45,6 +46,7 @@ export function parseSceneHash(hash: string): SceneHashState | null {
   const lang = params.get('lang') ?? undefined;
   const size = params.get('size') ?? undefined;
   const sort = params.get('sort') ?? undefined;
+  const district = params.get('district') ?? undefined;
   if (!repo || !isRepository(repo)) return null;
   if (commit !== undefined && !COMMIT_PATTERN.test(commit)) return null;
   if (!SEED_PATTERN.test(seed)) return null;
@@ -53,7 +55,8 @@ export function parseSceneHash(hash: string): SceneHashState | null {
   if (lang !== undefined && !/^[a-z0-9._+-]{1,40}$/.test(lang)) return null;
   if (size !== undefined && !['tiny', 'small', 'medium', 'large'].includes(size)) return null;
   if (sort !== undefined && !['name', 'size-asc', 'size-desc'].includes(sort)) return null;
-  return { repo, commit: commit?.toLowerCase(), seed, file, q, lang, size: size as SceneHashState['size'], sort: sort as SceneHashState['sort'] };
+  if (district !== undefined && district !== '/' && !isRepositorySegment(district)) return null;
+  return { repo, commit: commit?.toLowerCase(), seed, file, q, lang, size: size as SceneHashState['size'], sort: sort as SceneHashState['sort'], district };
 }
 
 export function serializeSceneHash(state: SceneHashState): string {
@@ -65,7 +68,12 @@ export function serializeSceneHash(state: SceneHashState): string {
   if (state.lang) params.set('lang', state.lang);
   if (state.size) params.set('size', state.size);
   if (state.sort) params.set('sort', state.sort);
+  if (state.district) params.set('district', state.district);
   return params.toString();
+}
+
+function isRepositorySegment(value: string): boolean {
+  return Boolean(value) && value !== '.' && value !== '..' && !/[\\/\u0000-\u001f]/.test(value);
 }
 
 function isRepositoryPath(value: string): boolean {

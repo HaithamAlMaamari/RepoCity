@@ -75,6 +75,7 @@ const focusBuildingEl = document.getElementById('focus-building') as HTMLButtonE
 const copyPathEl = document.getElementById('copy-path') as HTMLButtonElement;
 const openFileEl = document.getElementById('open-file') as HTMLAnchorElement;
 const explorerQueryEl = document.getElementById('explorer-query') as HTMLInputElement;
+const explorerDistrictEl = document.getElementById('explorer-district') as HTMLSelectElement;
 const explorerLanguageEl = document.getElementById('explorer-language') as HTMLSelectElement;
 const explorerSizeEl = document.getElementById('explorer-size') as HTMLSelectElement;
 const explorerSortEl = document.getElementById('explorer-sort') as HTMLSelectElement;
@@ -108,7 +109,7 @@ let loadSequence = 0;
 let activeSceneSeed = DEFAULT_SCENE_SEED;
 let explorerModel: ExplorerModel | null = null;
 let explorerView: ExplorerView | null = null;
-let explorerState: ExplorerFilterState = { query: '', language: '', size: 'all', sort: 'layout' };
+let explorerState: ExplorerFilterState = { query: '', district: '', language: '', size: 'all', sort: 'layout' };
 let explorerQueryTimer = 0;
 const expandedPaths = new Set<string>();
 let activeTreePath = '';
@@ -236,6 +237,7 @@ async function init(): Promise<void> {
   focusBuildingEl.addEventListener('click', focusSelectedBuilding);
   copyPathEl.addEventListener('click', copySelectedPath);
   explorerQueryEl.addEventListener('input', handleExplorerQueryInput);
+  explorerDistrictEl.addEventListener('change', readExplorerControls);
   explorerLanguageEl.addEventListener('change', readExplorerControls);
   explorerSizeEl.addEventListener('change', readExplorerControls);
   explorerSortEl.addEventListener('change', readExplorerControls);
@@ -426,6 +428,21 @@ function handleHashChange(): void {
   if (!state) return;
   const sameRevision = activeResult?.repository.fullName === state.repo && activeResult.revision.commitSha === state.commit;
   if (sameRevision && activeSceneSeed === state.seed) {
+    if (activeLoadController) {
+      activeLoadController.abort();
+      activeLoadController = null;
+      loadSequence++;
+      goBtn.disabled = false;
+      repoInput.disabled = false;
+      captureBtn.disabled = false;
+      captureHeaderBtn.disabled = false;
+      loadingEl.classList.remove('visible');
+      repoInput.value = activeResult!.repository.fullName;
+      const rendered = cityData?.buildings.length ?? 0;
+      setStatus(activeResult!.coverage.selection === 'sampled'
+        ? `${rendered.toLocaleString()} buildings from a deterministic sample.`
+        : `${rendered.toLocaleString()} buildings rendered.`);
+    }
     setExplorerStateFromHash(state);
     applyExplorerFilters(false);
     const candidateId = state.file ? explorerModel?.buildingIdByPath.get(state.file) : undefined;
@@ -435,6 +452,7 @@ function handleHashChange(): void {
       if (state.file) selectionStatusEl.textContent = 'The requested file is not rendered in this city.';
     }
     else if (id !== selectedBuildingId) selectBuilding(id, { focusCamera: true, updateUrl: false, announce: false });
+    replaceSelectionHash(id === undefined ? undefined : state.file);
     return;
   }
   repoInput.value = state.repo;
@@ -612,6 +630,11 @@ function syncExplorerForViewport(): void {
 
 function renderExplorer(result: FetchResult, buildings: Building[]): void {
   explorerModel = buildExplorerModel(result, buildings);
+  explorerDistrictEl.replaceChildren(new Option('all rendered districts', ''), ...explorerModel.districts.map((district) => new Option(`${district.label} (${district.files})`, district.value)));
+  if (explorerState.district && !explorerModel.districts.some((district) => district.value === explorerState.district)) {
+    explorerDistrictEl.add(new Option(`${explorerState.district === '/' ? 'repository root' : explorerState.district} (0 rendered)`, explorerState.district));
+  }
+  explorerDistrictEl.value = explorerState.district;
   const languages = [...new Set(buildings.map((building) => building.language))].sort();
   explorerLanguageEl.replaceChildren(new Option('all', ''), ...languages.map((language) => new Option(languageDisplayName(language), language)));
   if (explorerState.language && !languages.includes(explorerState.language)) {
@@ -628,6 +651,7 @@ function renderExplorer(result: FetchResult, buildings: Building[]): void {
 function readExplorerControls(): void {
   explorerState = {
     query: explorerQueryEl.value,
+    district: explorerDistrictEl.value,
     language: explorerLanguageEl.value,
     size: explorerSizeEl.value as ExplorerFilterState['size'],
     sort: explorerSortEl.value as ExplorerFilterState['sort'],
@@ -642,16 +666,21 @@ function handleExplorerQueryInput(): void {
 }
 
 function setExplorerStateFromHash(state: SceneHashState): void {
-  explorerState = { query: state.q ?? '', language: state.lang ?? '', size: state.size ?? 'all', sort: state.sort ?? 'layout' };
+  explorerState = { query: state.q ?? '', district: state.district ?? '', language: state.lang ?? '', size: state.size ?? 'all', sort: state.sort ?? 'layout' };
   explorerQueryEl.value = explorerState.query;
+  if (explorerState.district && ![...explorerDistrictEl.options].some((option) => option.value === explorerState.district)) {
+    explorerDistrictEl.add(new Option(`${explorerState.district === '/' ? 'repository root' : explorerState.district} (0 rendered)`, explorerState.district));
+  }
+  explorerDistrictEl.value = explorerState.district;
   explorerLanguageEl.value = explorerState.language;
   explorerSizeEl.value = explorerState.size;
   explorerSortEl.value = explorerState.sort;
 }
 
-function explorerHashState(): Pick<SceneHashState, 'q' | 'lang' | 'size' | 'sort'> {
+function explorerHashState(): Pick<SceneHashState, 'q' | 'lang' | 'size' | 'sort' | 'district'> {
   return {
     q: explorerState.query.trim() || undefined,
+    district: explorerState.district || undefined,
     lang: explorerState.language || undefined,
     size: explorerState.size === 'all' ? undefined : explorerState.size,
     sort: explorerState.sort === 'layout' ? undefined : explorerState.sort,
