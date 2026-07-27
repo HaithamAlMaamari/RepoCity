@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three';
-import type { DistrictRect, StreetSegment } from '../types';
+import type { DistrictRect, PlotRect, StreetSegment } from '../types';
 import { makeRadialGlow } from './textures';
 
 export interface StreetNetwork {
@@ -19,12 +19,47 @@ export interface StreetNetwork {
 export function buildStreetNetwork(
   districts: DistrictRect[],
   cityBounds: { minX: number; maxX: number; minZ: number; maxZ: number },
+  plots: readonly PlotRect[] = [],
 ): StreetNetwork {
   const group = new THREE.Group();
   const streets: StreetSegment[] = [];
   const disposables: { dispose(): void }[] = [];
 
   const { minX, maxX, minZ, maxZ } = cityBounds;
+
+  /* ---- surveyed city plate: the repository has a clear footprint ---- */
+  const plateGeo = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ);
+  plateGeo.rotateX(-Math.PI / 2);
+  const plateMat = new THREE.MeshBasicMaterial({ color: 0x071321, fog: true });
+  const plate = new THREE.Mesh(plateGeo, plateMat);
+  plate.position.set((minX + maxX) / 2, -0.04, (minZ + maxZ) / 2);
+  plate.frustumCulled = false;
+  plate.renderOrder = -1;
+  group.add(plate);
+  disposables.push(plateGeo, plateMat);
+
+  /* ---- file plot boundaries preserve the treemap allocation on ground ---- */
+  if (plots.length > 0) {
+    const plotPos: number[] = [];
+    for (const plot of plots) {
+      const x2 = plot.x + plot.w;
+      const z2 = plot.z + plot.d;
+      const y = 0.065;
+      plotPos.push(
+        plot.x, y, plot.z, x2, y, plot.z,
+        x2, y, plot.z, x2, y, z2,
+        x2, y, z2, plot.x, y, z2,
+        plot.x, y, z2, plot.x, y, plot.z,
+      );
+    }
+    const plotGeo = new THREE.BufferGeometry();
+    plotGeo.setAttribute('position', new THREE.Float32BufferAttribute(plotPos, 3));
+    const plotMat = new THREE.LineBasicMaterial({ color: 0x536078, transparent: true, opacity: 0.16, fog: true });
+    const plotLines = new THREE.LineSegments(plotGeo, plotMat);
+    plotLines.frustumCulled = false;
+    group.add(plotLines);
+    disposables.push(plotGeo, plotMat);
+  }
 
   if (districts.length === 0) {
     // Repositories with only root-level files still need a legible road grid.
@@ -65,6 +100,8 @@ export function buildStreetNetwork(
       { x1: xMid + width * 1.5, z1: minZ, x2: xMid + width * 1.5, z2: maxZ, width, axis: 'z' },
     );
   }
+
+  streets.splice(0, streets.length, ...clipStreetsToPlots(streets, plots));
 
   /* ---- road surface (dark) ---- */
   const roadPos: number[] = [];
@@ -168,34 +205,126 @@ export function buildStreetNetwork(
     disposables.push(gGeo, gMat);
   }
 
-  /* ---- district outlines ---- */
+  /* ---- district survey perimeters and corner extent markers ---- */
   const linePos: number[] = [];
+  const lineColor: number[] = [];
+  const surveyPosts: { x: number; z: number; color: number }[] = [];
+  const surveyColor = new THREE.Color();
+  const addSurveySegment = (x1: number, y1: number, z1: number, x2: number, y2: number, z2: number) => {
+    linePos.push(x1, y1, z1, x2, y2, z2);
+    lineColor.push(surveyColor.r, surveyColor.g, surveyColor.b, surveyColor.r, surveyColor.g, surveyColor.b);
+  };
   for (const dd of districts) {
-    const y = 0.09;
+    districtColor(dd.name ?? '', surveyColor);
+    const y = 0.11;
     const x2 = dd.x + dd.w, z2 = dd.z + dd.d;
-    linePos.push(
-      dd.x, y, dd.z, x2, y, dd.z,
-      x2, y, dd.z, x2, y, z2,
-      x2, y, z2, dd.x, y, z2,
-      dd.x, y, z2, dd.x, y, dd.z,
-    );
+    addSurveySegment(dd.x, y, dd.z, x2, y, dd.z);
+    addSurveySegment(x2, y, dd.z, x2, y, z2);
+    addSurveySegment(x2, y, z2, dd.x, y, z2);
+    addSurveySegment(dd.x, y, z2, dd.x, y, dd.z);
+    const tick = Math.max(0.8, Math.min(3.0, Math.min(dd.w, dd.d) * 0.10));
+    const corners = [
+      [dd.x, dd.z, 1, 1], [x2, dd.z, -1, 1],
+      [x2, z2, -1, -1], [dd.x, z2, 1, -1],
+    ] as const;
+    for (const [x, z, dx, dz] of corners) {
+      addSurveySegment(x, y, z, x + dx * tick, y, z);
+      addSurveySegment(x, y, z, x, y, z + dz * tick);
+      surveyPosts.push({ x, z, color: surveyColor.getHex() });
+    }
   }
   if (linePos.length > 0) {
     const lGeo = new THREE.BufferGeometry();
     lGeo.setAttribute('position', new THREE.Float32BufferAttribute(linePos, 3));
+    lGeo.setAttribute('color', new THREE.Float32BufferAttribute(lineColor, 3));
     const lMat = new THREE.LineBasicMaterial({
-      color: 0x00c8f0, transparent: true, opacity: 0.16, fog: true,
+      vertexColors: true, transparent: true, opacity: 0.68, fog: true,
     });
     const lines = new THREE.LineSegments(lGeo, lMat);
     lines.frustumCulled = false;
     group.add(lines);
     disposables.push(lGeo, lMat);
   }
+  if (surveyPosts.length > 0) {
+    const postGeo = new THREE.CylinderGeometry(0.22, 0.22, 3.6, 6);
+    postGeo.translate(0, 1.8, 0);
+    const postMat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: true });
+    const posts = new THREE.InstancedMesh(postGeo, postMat, surveyPosts.length);
+    const beaconGeo = new THREE.SphereGeometry(0.42, 8, 6);
+    const beaconMat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+    const beacons = new THREE.InstancedMesh(beaconGeo, beaconMat, surveyPosts.length);
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    for (let i = 0; i < surveyPosts.length; i++) {
+      const post = surveyPosts[i];
+      dummy.position.set(post.x, 0.1, post.z);
+      dummy.updateMatrix();
+      posts.setMatrixAt(i, dummy.matrix);
+      posts.setColorAt(i, color.setHex(post.color));
+      dummy.position.y = 3.85;
+      dummy.updateMatrix();
+      beacons.setMatrixAt(i, dummy.matrix);
+      beacons.setColorAt(i, color);
+    }
+    posts.instanceMatrix.needsUpdate = true;
+    if (posts.instanceColor) posts.instanceColor.needsUpdate = true;
+    beacons.instanceMatrix.needsUpdate = true;
+    if (beacons.instanceColor) beacons.instanceColor.needsUpdate = true;
+    posts.frustumCulled = false;
+    beacons.frustumCulled = false;
+    group.add(posts, beacons);
+    disposables.push(postGeo, postMat, beaconGeo, beaconMat);
+  }
 
   return {
     group, streets,
     dispose() { for (const x of disposables) x.dispose(); },
   };
+}
+
+function districtColor(name: string, target: THREE.Color): THREE.Color {
+  let hash = 2166136261;
+  for (let i = 0; i < name.length; i++) hash = Math.imul(hash ^ name.charCodeAt(i), 16777619);
+  const palette = [0x00c8f0, 0xff2d8a, 0xffb347, 0x7f7cff];
+  return target.setHex(palette[(hash >>> 0) % palette.length]);
+}
+
+export function clipStreetsToPlots(streets: readonly StreetSegment[], plots: readonly PlotRect[]): StreetSegment[] {
+  const clipped: StreetSegment[] = [];
+  for (const street of streets) {
+    const blockers: [number, number][] = [];
+    for (const plot of plots) {
+      const occupiedW = Math.max(plot.w, 0.05);
+      const occupiedD = Math.max(plot.d, 0.05);
+      const occupiedX = plot.x + (plot.w - occupiedW) / 2;
+      const occupiedZ = plot.z + (plot.d - occupiedD) / 2;
+      if (street.axis === 'x') {
+        const roadMin = street.z1 - street.width / 2;
+        const roadMax = street.z1 + street.width / 2;
+        if (occupiedZ < roadMax && occupiedZ + occupiedD > roadMin) blockers.push([occupiedX, occupiedX + occupiedW]);
+      } else {
+        const roadMin = street.x1 - street.width / 2;
+        const roadMax = street.x1 + street.width / 2;
+        if (occupiedX < roadMax && occupiedX + occupiedW > roadMin) blockers.push([occupiedZ, occupiedZ + occupiedD]);
+      }
+    }
+    const start = street.axis === 'x' ? street.x1 : street.z1;
+    const end = street.axis === 'x' ? street.x2 : street.z2;
+    let cursor = start;
+    for (const [blockStart, blockEnd] of mergeBands(blockers)) {
+      if (blockStart > cursor + 0.2) clipped.push(streetSlice(street, cursor, Math.min(blockStart, end)));
+      cursor = Math.max(cursor, blockEnd);
+      if (cursor >= end) break;
+    }
+    if (cursor < end - 0.2) clipped.push(streetSlice(street, cursor, end));
+  }
+  return clipped;
+}
+
+function streetSlice(street: StreetSegment, start: number, end: number): StreetSegment {
+  return street.axis === 'x'
+    ? { ...street, x1: start, x2: end }
+    : { ...street, z1: start, z2: end };
 }
 
 /* ---- interval helpers ---- */

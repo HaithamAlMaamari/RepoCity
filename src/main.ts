@@ -329,7 +329,8 @@ async function loadRepo(
     /* ── streets ── */
     const districts = buildDistrictRects(cells);
     const footprint = districtFootprint(districts, b);
-    streetNet = buildStreetNetwork(districts, footprint);
+    const plots = cells.map((cell) => ({ x: cell.rect.x, z: cell.rect.y, w: cell.rect.w, d: cell.rect.h }));
+    streetNet = buildStreetNetwork(districts, footprint, plots);
     cityRoot.add(streetNet.group);
 
     /* ── ground traffic ── */
@@ -588,6 +589,7 @@ function clearSelection(updateUrl: boolean): void {
   selectedBuildingId = -1;
   cityData?.setSelected(-1);
   hideInfo();
+  selectionStatusEl.textContent = '';
   updateTreeSelection();
   if (updateUrl) replaceSelectionHash(undefined);
 }
@@ -619,6 +621,7 @@ function toggleExplorer(): void {
   explorerUserToggled = true;
   const open = explorerPanelEl.classList.toggle('open');
   explorerToggleEl.setAttribute('aria-expanded', String(open));
+  document.body.classList.toggle('explorer-open', open);
 }
 
 function syncExplorerForViewport(): void {
@@ -626,6 +629,7 @@ function syncExplorerForViewport(): void {
   const open = !mobileExplorerMedia.matches;
   explorerPanelEl.classList.toggle('open', open);
   explorerToggleEl.setAttribute('aria-expanded', String(open));
+  document.body.classList.toggle('explorer-open', open);
 }
 
 function renderExplorer(result: FetchResult, buildings: Building[]): void {

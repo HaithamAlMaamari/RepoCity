@@ -390,7 +390,7 @@
       #semantic-legend dt { color: var(--ink); font-weight: 600; }
       #semantic-legend dd { color: var(--dim); margin: 0; }
       .legend-note { margin: 9px 0 0; color: var(--faint); font-size: 10px; line-height: 1.45; }
-      #explore-panel:not(.open) #explore-body { display: none; }
+      #explore-panel:not(.open) #semantic-legend, #explore-panel:not(.open) #explore-body { display: none; }
       #explore-body { max-height: calc(100dvh - 345px); overflow: auto; overscroll-behavior: contain; }
       .explorer-section { padding: 12px 10px 14px; max-height: min(48vh, 520px); overflow: auto; overscroll-behavior: contain; }
       #explorer-coverage { color: var(--faint); font-size: 10px; line-height: 1.45; margin: 0 6px 10px; }
@@ -557,10 +557,17 @@
         header { flex-wrap: wrap; gap: 8px; padding: 12px; }
         .input-wrap input { width: calc(100vw - 220px); min-width: 160px; }
         .presets { display: none; }
-        #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 130px; }
+        #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 130px; max-height: 168px; padding: 12px 14px; box-sizing: border-box; }
+        #sidebar #repo-name { font-size: 19px; }
+        #sidebar #repo-branch { margin-top: 3px; }
+        #sidebar #repo-coverage { margin-bottom: 8px; }
+        #sidebar .stats { grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+        #sidebar .stat-val { font-size: 13px; }
+        #sidebar #language-label, #sidebar #lang-bars, #sidebar .sidebar-actions { display: none; }
+        body.explorer-open #sidebar { display: none; }
         #explore-panel { top: auto; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-height: 58dvh; }
         #semantic-legend { padding: 9px 14px; }
-        #semantic-legend dl { display: none; }
+        #semantic-legend dl { grid-template-columns: auto 1fr; font-size: 9px; }
         #explore-body { max-height: 43dvh; }
         .tree-row { min-height: 44px; }
         #hints { display: none; }
@@ -636,9 +643,11 @@
         <h3 id="legend-heading" class="sr-only">How to read the city</h3>
         <dl>
           <dt>building</dt><dd>one rendered file</dd>
-          <dt>plot + height</dt><dd>file bytes, approximately and logarithmically scaled</dd>
+          <dt>plot area</dt><dd>approximately proportional to file bytes</dd>
+          <dt>height</dt><dd>logarithmic bytes with deterministic variation</dd>
           <dt>color</dt><dd>detected file language</dd>
-          <dt>district</dt><dd>nested folder grouping</dd>
+          <dt>parcel line</dt><dd>one rendered file's allocated plot</dd>
+          <dt>survey border</dt><dd>rendered top-level folder extent</dd>
         </dl>
         <p class="legend-note">Traffic, stars, fog and particles are atmosphere, not repository activity.</p>
       </section>

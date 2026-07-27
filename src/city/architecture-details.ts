@@ -330,8 +330,9 @@ function updateMatrices(mesh: THREE.InstancedMesh, specs: InstanceSpec[], mask: 
   const dummy = new THREE.Object3D();
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i];
+    const visible = mask[spec.ownerId] === 1 ? 1 : 0;
     dummy.position.set(spec.x, spec.y, spec.z);
-    dummy.scale.set(spec.sx, mask[spec.ownerId] === 1 ? spec.sy : 0, spec.sz);
+    dummy.scale.set(spec.sx * visible, spec.sy * visible, spec.sz * visible);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
   }

@@ -32,8 +32,7 @@ export function districtFootprint(
   districts: DistrictRect[],
   fallback: { minX: number; maxX: number; minZ: number; maxZ: number },
 ): { minX: number; maxX: number; minZ: number; maxZ: number } {
-  if (districts.length === 0) return fallback;
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  let { minX, maxX, minZ, maxZ } = fallback;
   for (const d of districts) {
     minX = Math.min(minX, d.x);
     maxX = Math.max(maxX, d.x + d.w);

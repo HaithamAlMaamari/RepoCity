@@ -144,8 +144,9 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
       if (pylonMesh) {
         for (let i = 0; i < pylons.length; i++) {
           const p = pylons[i];
+          const visible = mask[p.ownerId] === 1 ? 1 : 0;
           d.position.set(p.x, p.y, p.z);
-          d.scale.set(1, mask[p.ownerId] === 1 ? p.h : 0, 1);
+          d.scale.set(visible, p.h * visible, visible);
           d.updateMatrix();
           pylonMesh.setMatrixAt(i, d.matrix);
         }

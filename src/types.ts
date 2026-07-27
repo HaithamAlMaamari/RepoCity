@@ -37,6 +37,14 @@ export interface DistrictRect {
   name?: string;
 }
 
+/** Ground plot occupied by one rendered file building. */
+export interface PlotRect {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+}
+
 /**
  * A street segment — a rectangle representing a road between districts.
  * `axis: 'x'` means the street runs along the X axis (so vehicles move
