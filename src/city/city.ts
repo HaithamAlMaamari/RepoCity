@@ -324,9 +324,9 @@ export function buildCity(cells: LayoutCell[]): CityData {
     mesh, details, buildings,
     bounds: { minX, maxX, minZ, maxZ },
     maxHeight,
-    update(dt: number) { uniforms.uTime.value += dt; },
-    setHovered(id: number) { uniforms.uHover.value = id; },
-    setSelected(id: number) { uniforms.uSelect.value = id; },
+    update(dt: number) { uniforms.uTime.value += dt; details.update(dt); },
+    setHovered(id: number) { uniforms.uHover.value = id; details.setHovered(id); },
+    setSelected(id: number) { uniforms.uSelect.value = id; details.setSelected(id); },
     setMatchMask(mask: Uint8Array) {
       for (let i = 0; i < n; i++) aMatch[i] = mask[i] ?? 0;
       matchAttribute.needsUpdate = true;

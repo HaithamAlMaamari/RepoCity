@@ -55,39 +55,6 @@ export function buildAtmosphere(citySize: number, maxBuildingHeight: number): At
   group.add(grid);
   disposables.push(gridGeo, gridMat);
 
-  /* ---- low-rise perimeter blocks create a believable urban horizon ---- */
-  const blockCount = 220;
-  const blockGeo = new THREE.BoxGeometry(1, 1, 1);
-  const blockMat = new THREE.MeshStandardMaterial({
-    color: 0x111b2f,
-    roughness: 0.84,
-    metalness: 0.16,
-  });
-  const blocks = new THREE.InstancedMesh(blockGeo, blockMat, blockCount);
-  const blockDummy = new THREE.Object3D();
-  let blockIndex = 0;
-  for (let ix = -18; ix <= 18 && blockIndex < blockCount; ix++) {
-    for (let iz = -18; iz <= 18 && blockIndex < blockCount; iz++) {
-      const x = ix * 18 + 9;
-      const z = iz * 18 + 9;
-      if (Math.max(Math.abs(x), Math.abs(z)) < S * 0.72) continue;
-      const hash = Math.abs(Math.sin(ix * 19.17 + iz * 43.71) * 43758.5453) % 1;
-      if (hash < 0.34) continue;
-      const w = 7 + hash * 7;
-      const d = 7 + ((hash * 17.0) % 1) * 7;
-      const h = 2.0 + ((hash * 31.0) % 1) * 7.0;
-      blockDummy.position.set(x, h / 2 - 0.22, z);
-      blockDummy.scale.set(w, h, d);
-      blockDummy.updateMatrix();
-      blocks.setMatrixAt(blockIndex++, blockDummy.matrix);
-    }
-  }
-  blocks.count = blockIndex;
-  blocks.instanceMatrix.needsUpdate = true;
-  blocks.frustumCulled = false;
-  group.add(blocks);
-  disposables.push(blockGeo, blockMat);
-
   /* ---- city glow pools on the ground ---- */
   const glowTex = makeRadialGlow(256);
   disposables.push(glowTex);

@@ -13,6 +13,9 @@ import type { Building } from './city';
 
 export interface ArchitectureDetails {
   group: THREE.Group;
+  update(dt: number): void;
+  setHovered(id: number): void;
+  setSelected(id: number): void;
   setMatchMask(mask: Uint8Array): void;
   dispose(): void;
 }
@@ -29,6 +32,12 @@ interface InstanceSpec {
 
 interface StripSpec extends InstanceSpec {
   color: [number, number, number];
+}
+
+interface CrownUniforms {
+  time: { value: number };
+  hover: { value: number };
+  selected: { value: number };
 }
 
 export function buildArchitectureDetails(buildings: Building[]): ArchitectureDetails {
@@ -77,13 +86,12 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
     emissive: 0x020814,
     emissiveIntensity: 0.35,
   });
-  const upperMaterial = new THREE.MeshStandardMaterial({
-    color: 0x30486b,
-    roughness: 0.58,
-    metalness: 0.45,
-    emissive: 0x0a1c32,
-    emissiveIntensity: 0.48,
-  });
+  const crownUniforms: CrownUniforms = {
+    time: { value: 0 },
+    hover: { value: -1 },
+    selected: { value: -1 },
+  };
+  const upperMaterial = buildCrownMaterial(crownUniforms);
   const spireMaterial = new THREE.MeshStandardMaterial({
     color: 0x142038,
     roughness: 0.48,
@@ -94,12 +102,15 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
 
   addBoxes(group, podiums, bodyMaterial, disposables, maskUpdaters);
   addBoxes(group, ledges, bodyMaterial, disposables, maskUpdaters);
-  addBoxes(group, crowns, upperMaterial, disposables, maskUpdaters);
+  addCrownBoxes(group, crowns, buildings, upperMaterial, disposables, maskUpdaters);
   addSpires(group, spires, spireMaterial, disposables, maskUpdaters);
   addStripsMesh(group, strips, disposables, maskUpdaters);
 
   return {
     group,
+    update(dt) { crownUniforms.time.value += dt; },
+    setHovered(id) { crownUniforms.hover.value = id; },
+    setSelected(id) { crownUniforms.selected.value = id; },
     setMatchMask(mask) { for (const update of maskUpdaters) update(mask); },
     dispose() {
       for (const disposable of disposables) disposable.dispose();
@@ -133,6 +144,104 @@ function addBoxes(
   // the caller's disposable list.
   if (!disposables.includes(material)) disposables.push(material);
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
+}
+
+function addCrownBoxes(
+  group: THREE.Group,
+  specs: InstanceSpec[],
+  buildings: Building[],
+  material: THREE.MeshStandardMaterial,
+  disposables: { dispose(): void }[],
+  maskUpdaters: ((mask: Uint8Array) => void)[],
+): void {
+  if (specs.length === 0) return;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const ownerIds = new Float32Array(specs.length);
+  const colors = new Float32Array(specs.length * 3);
+  const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i];
+    const color = buildings[spec.ownerId].color;
+    ownerIds[i] = spec.ownerId;
+    colors[i * 3] = color[0];
+    colors[i * 3 + 1] = color[1];
+    colors[i * 3 + 2] = color[2];
+    dummy.position.set(spec.x, spec.y, spec.z);
+    dummy.scale.set(spec.sx, spec.sy, spec.sz);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  geometry.setAttribute('aOwnerId', new THREE.InstancedBufferAttribute(ownerIds, 1));
+  geometry.setAttribute('aCrownColor', new THREE.InstancedBufferAttribute(colors, 3));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  group.add(mesh);
+  disposables.push(geometry);
+  if (!disposables.includes(material)) disposables.push(material);
+  maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
+}
+
+function buildCrownMaterial(uniforms: CrownUniforms): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x14243c,
+    roughness: 0.58,
+    metalness: 0.42,
+    emissive: 0x020814,
+    emissiveIntensity: 0.35,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uCrownTime = uniforms.time;
+    shader.uniforms.uCrownHover = uniforms.hover;
+    shader.uniforms.uCrownSelected = uniforms.selected;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float aOwnerId;
+        attribute vec3 aCrownColor;
+        varying float vOwnerId;
+        varying vec3 vCrownColor;
+        varying vec3 vCrownWorld;
+        varying vec3 vCrownLocal;
+        varying vec3 vCrownNormal;`)
+      .replace('#include <fog_vertex>', `
+        vOwnerId = aOwnerId;
+        vCrownColor = aCrownColor;
+        vCrownLocal = position;
+        vCrownWorld = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+        vCrownNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal);
+        #include <fog_vertex>`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vOwnerId;
+        varying vec3 vCrownColor;
+        varying vec3 vCrownWorld;
+        varying vec3 vCrownLocal;
+        varying vec3 vCrownNormal;
+        uniform float uCrownTime;
+        uniform float uCrownHover;
+        uniform float uCrownSelected;
+        float crownHash(float n) { return fract(sin(n) * 43758.5453); }`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          vec3 crownN = normalize(vCrownNormal);
+          float sideMask = 1.0 - step(0.5, abs(crownN.y));
+          float horizontal = mix(vCrownWorld.x, vCrownWorld.z, abs(crownN.x));
+          float yCell = floor(vCrownWorld.y / 0.55);
+          float yFrac = fract(vCrownWorld.y / 0.55);
+          float hCell = floor(horizontal / 0.66);
+          float hFrac = fract(horizontal / 0.66);
+          float yShape = smoothstep(0.16, 0.30, yFrac) * (1.0 - smoothstep(0.60, 0.76, yFrac));
+          float hShape = smoothstep(0.16, 0.30, hFrac) * (1.0 - smoothstep(0.68, 0.82, hFrac));
+          float lit = step(0.44, crownHash(yCell * 7.31 + hCell * 11.13 + vOwnerId * 0.37));
+          float windows = yShape * hShape * sideMask * lit;
+          float rim = smoothstep(0.435, 0.5, vCrownLocal.y) * sideMask;
+          float activeBoost = step(abs(vOwnerId - uCrownHover), 0.5) * 0.25 + step(abs(vOwnerId - uCrownSelected), 0.5) * 0.55;
+          float pulse = 0.92 + sin(uCrownTime * 4.0 + vOwnerId * 0.23) * 0.08;
+          totalEmissiveRadiance += vCrownColor * (windows * 1.9 + rim * 0.7) * (1.0 + activeBoost) * pulse;
+        }`);
+  };
+  material.customProgramCacheKey = () => 'repocity-crowns-v1';
+  return material;
 }
 
 function addSpires(
