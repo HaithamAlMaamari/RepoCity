@@ -42,6 +42,9 @@ export function buildStreetNetwork(
   if (plots.length > 0) {
     const plotPos: number[] = [];
     for (const plot of plots) {
+      // Sub-line-width parcels cannot show a separate boundary without
+      // visually cutting through their building at normal camera distances.
+      if (plot.w < 0.05 || plot.d < 0.05) continue;
       const x2 = plot.x + plot.w;
       const z2 = plot.z + plot.d;
       const y = 0.065;

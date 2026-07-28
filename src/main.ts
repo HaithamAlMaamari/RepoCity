@@ -67,6 +67,7 @@ const infoSizeEl = document.getElementById('info-size')!;
 const infoLangEl = document.getElementById('info-lang')!;
 const explorerPanelEl = document.getElementById('explore-panel') as HTMLElement;
 const explorerToggleEl = document.getElementById('explorer-toggle') as HTMLButtonElement;
+const summaryToggleEl = document.getElementById('summary-toggle') as HTMLButtonElement;
 const explorerCoverageEl = document.getElementById('explorer-coverage')!;
 const repoTreeEl = document.getElementById('repo-tree') as HTMLUListElement;
 const treeEmptyEl = document.getElementById('tree-empty') as HTMLParagraphElement;
@@ -83,7 +84,9 @@ const explorerResultsEl = document.getElementById('explorer-results')!;
 const explorerBreadcrumbsEl = document.getElementById('explorer-breadcrumbs')!;
 const mobileExplorerMedia = window.matchMedia('(max-width: 720px)');
 let explorerUserToggled = false;
+let summaryUserToggled = false;
 syncExplorerForViewport();
+syncSummaryForViewport();
 
 /* ═══ Renderer state ════════════════════════════════════ */
 let renderer: THREE.WebGLRenderer;
@@ -232,6 +235,8 @@ async function init(): Promise<void> {
   canvas.addEventListener('pointerleave', () => setHovered(-1));
   explorerToggleEl.addEventListener('click', toggleExplorer);
   mobileExplorerMedia.addEventListener('change', syncExplorerForViewport);
+  summaryToggleEl.addEventListener('click', toggleSummary);
+  mobileExplorerMedia.addEventListener('change', syncSummaryForViewport);
   repoTreeEl.addEventListener('keydown', handleTreeKeydown);
   repoTreeEl.addEventListener('click', handleTreeClick);
   focusBuildingEl.addEventListener('click', focusSelectedBuilding);
@@ -622,6 +627,7 @@ function toggleExplorer(): void {
   const open = explorerPanelEl.classList.toggle('open');
   explorerToggleEl.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('explorer-open', open);
+  if (open && mobileExplorerMedia.matches) setSummaryOpen(false);
 }
 
 function syncExplorerForViewport(): void {
@@ -630,6 +636,28 @@ function syncExplorerForViewport(): void {
   explorerPanelEl.classList.toggle('open', open);
   explorerToggleEl.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('explorer-open', open);
+}
+
+function toggleSummary(): void {
+  summaryUserToggled = true;
+  const open = !document.body.classList.contains('summary-open');
+  setSummaryOpen(open);
+  if (open && mobileExplorerMedia.matches) {
+    explorerUserToggled = true;
+    explorerPanelEl.classList.remove('open');
+    explorerToggleEl.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('explorer-open');
+  }
+}
+
+function setSummaryOpen(open: boolean): void {
+  document.body.classList.toggle('summary-open', open);
+  summaryToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+function syncSummaryForViewport(): void {
+  if (summaryUserToggled) return;
+  setSummaryOpen(!mobileExplorerMedia.matches);
 }
 
 function renderExplorer(result: FetchResult, buildings: Building[]): void {

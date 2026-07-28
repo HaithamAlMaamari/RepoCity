@@ -20,6 +20,7 @@ export interface Rooftops {
 interface BeaconSpec {
   ownerId: number;
   x: number; y: number; z: number;
+  scale: number;
   base: THREE.Color;
   rate: number;
   phase: number;
@@ -32,7 +33,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
   /* ---- pick tall buildings ---- */
   const tallThreshold = maxHeight * 0.30;
   const specs: BeaconSpec[] = [];
-  const pylons: { ownerId: number; x: number; y: number; z: number; h: number }[] = [];
+  const pylons: { ownerId: number; x: number; y: number; z: number; h: number; scale: number }[] = [];
 
   for (let i = 0; i < buildings.length; i++) {
     const b = buildings[i];
@@ -45,7 +46,12 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
     const roofY = b.position[1] - b.scale[1] / 2 + b.totalHeight;
     const pylonH = 1.2 + signHash(i * 19 + 11) * 3.4;
 
-    pylons.push({ ownerId: i, x: b.position[0] + ox, y: roofY, z: b.position[2] + oz, h: pylonH });
+    const roofScale = Math.min(1, b.parcel[0] * 0.98 / 0.44, b.parcel[1] * 0.98 / 0.44);
+    const roofRadius = 0.22 * roofScale;
+    const x = Math.max(b.position[0] - b.parcel[0] * 0.49 + roofRadius, Math.min(b.position[0] + b.parcel[0] * 0.49 - roofRadius, b.position[0] + ox));
+    const z = Math.max(b.position[2] - b.parcel[1] * 0.49 + roofRadius, Math.min(b.position[2] + b.parcel[1] * 0.49 - roofRadius, b.position[2] + oz));
+
+    pylons.push({ ownerId: i, x, y: roofY, z, h: pylonH, scale: roofScale });
 
     // ~80% of pylons get a blinking beacon
     if (signHash(i * 29 + 5) > 0.2) {
@@ -56,9 +62,10 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
       else c.setRGB(1.0, 0.65, 0.2);                    // amber
       specs.push({
         ownerId: i,
-        x: b.position[0] + ox,
+        x,
         y: roofY + pylonH + 0.15,
-        z: b.position[2] + oz,
+        z,
+        scale: roofScale,
         base: c,
         rate: 0.5 + signHash(i * 37 + 3) * 1.4,
         phase: signHash(i * 53 + 29) * Math.PI * 2,
@@ -80,7 +87,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
     for (let i = 0; i < pylons.length; i++) {
       const p = pylons[i];
       d.position.set(p.x, p.y, p.z);
-      d.scale.set(1, p.h, 1);
+      d.scale.set(p.scale, p.h, p.scale);
       d.updateMatrix();
       pylonMesh.setMatrixAt(i, d.matrix);
     }
@@ -106,6 +113,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
     for (let i = 0; i < specs.length; i++) {
       const s = specs[i];
       d.position.set(s.x, s.y, s.z);
+      d.scale.setScalar(s.scale);
       d.updateMatrix();
       beaconMesh.setMatrixAt(i, d.matrix);
       beaconMesh.setColorAt(i, c.copy(s.base));
@@ -146,7 +154,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
           const p = pylons[i];
           const visible = mask[p.ownerId] === 1 ? 1 : 0;
           d.position.set(p.x, p.y, p.z);
-          d.scale.set(visible, p.h * visible, visible);
+          d.scale.set(p.scale * visible, p.h * visible, p.scale * visible);
           d.updateMatrix();
           pylonMesh.setMatrixAt(i, d.matrix);
         }
@@ -156,7 +164,7 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
         for (let i = 0; i < specs.length; i++) {
           const s = specs[i];
           d.position.set(s.x, s.y, s.z);
-          d.scale.setScalar(mask[s.ownerId] === 1 ? 1 : 0);
+          d.scale.setScalar(mask[s.ownerId] === 1 ? s.scale : 0);
           d.updateMatrix();
           beaconMesh.setMatrixAt(i, d.matrix);
         }

@@ -21,6 +21,7 @@ import type { ArchitectureDetails } from './architecture-details';
 export interface Building {
   position: [number, number, number];
   scale: [number, number, number];
+  parcel: [number, number];
   color: [number, number, number];
   path: string;
   size: number;
@@ -256,7 +257,8 @@ export function buildCity(cells: LayoutCell[]): CityData {
     const col = languageColor(lang);
     buildings[i] = {
       position: [r.x + r.w / 2, coreHeight / 2, r.y + r.h / 2],
-      scale: [Math.max(0.05, r.w * 0.9), coreHeight, Math.max(0.05, r.h * 0.9)],
+      scale: [r.w * 0.9, coreHeight, r.h * 0.9],
+      parcel: [r.w, r.h],
       color: col,
       path: c.node.path, size: rawSize, language: lang, totalHeight, profile,
     };

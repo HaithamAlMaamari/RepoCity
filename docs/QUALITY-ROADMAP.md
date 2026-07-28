@@ -29,7 +29,7 @@ Completed evidence:
 - Explore mode now includes a truthful persistent legend, accessible keyboard directory tree, synchronized canvas/file selection, camera focus, immutable GitHub links, path copy, rendered-coverage disclosure, shareable selected-file state, and a responsive mobile sheet.
 - Rendered-file search, language and non-overlapping size filters, deterministic sorting, breadcrumbs, canonical filter URLs, and complete masked building silhouettes are synchronized across the index, canvas, picking, and poster metadata.
 - Top-level and repository-root district isolation now composes with every rendered-file filter and remains synchronized across the index, complete building silhouettes, picking, selection, poster metadata, and canonical history state.
-- Building crowns now continue language-colored facade lighting without decorative perimeter blocks; semantic file parcels, complete-layout ground coverage, road clearance, and rendered-folder survey perimeters make the city footprint legible from oblique and top-down views.
+- Building crowns now continue language-colored facade lighting without decorative perimeter blocks; semantic file parcels, complete-layout ground coverage, road clearance, rendered-folder survey perimeters, parcel-contained geometry, and mutually exclusive mobile panels make the city footprint legible and navigable.
 
 Still required before Phase 1 exits:
 

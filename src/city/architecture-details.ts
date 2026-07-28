@@ -79,6 +79,11 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
     }
   }
 
+  for (const specs of [podiums, ledges, crowns, strips]) {
+    for (const spec of specs) constrainToParcel(spec, buildings[spec.ownerId], 1);
+  }
+  for (const spec of spires) constrainToParcel(spec, buildings[spec.ownerId], 1.8);
+
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: 0x17243b,
     roughness: 0.68,
@@ -337,4 +342,21 @@ function updateMatrices(mesh: THREE.InstancedMesh, specs: InstanceSpec[], mask: 
     mesh.setMatrixAt(i, dummy.matrix);
   }
   mesh.instanceMatrix.needsUpdate = true;
+}
+
+function constrainToParcel(spec: InstanceSpec, building: Building, geometryWidth: number): void {
+  // Match the primary core's 90% parcel footprint and retain enough margin
+  // for Float32 instance-matrix precision on extremely narrow parcels.
+  const parcelW = building.parcel[0] * 0.90;
+  const parcelD = building.parcel[1] * 0.90;
+  spec.sx = Math.min(spec.sx, parcelW / geometryWidth);
+  spec.sz = Math.min(spec.sz, parcelD / geometryWidth);
+  const worldW = spec.sx * geometryWidth;
+  const worldD = spec.sz * geometryWidth;
+  const minX = building.position[0] - parcelW / 2 + worldW / 2;
+  const maxX = building.position[0] + parcelW / 2 - worldW / 2;
+  const minZ = building.position[2] - parcelD / 2 + worldD / 2;
+  const maxZ = building.position[2] + parcelD / 2 - worldD / 2;
+  spec.x = Math.max(minX, Math.min(maxX, spec.x));
+  spec.z = Math.max(minZ, Math.min(maxZ, spec.z));
 }
