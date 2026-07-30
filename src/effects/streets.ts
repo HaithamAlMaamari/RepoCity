@@ -35,10 +35,10 @@ export function buildStreetNetwork(
   const ringMinZ = minZ + ringWidth / 2;
   const ringMaxZ = maxZ - ringWidth / 2;
   const ringStreets: StreetSegment[] = [
-    { x1: ringMinX, z1: ringMinZ, x2: ringMaxX, z2: ringMinZ, width: ringWidth, axis: 'x' },
-    { x1: ringMinX, z1: ringMaxZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'x' },
-    { x1: ringMinX, z1: ringMinZ, x2: ringMinX, z2: ringMaxZ, width: ringWidth, axis: 'z' },
-    { x1: ringMaxX, z1: ringMinZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'z' },
+    { x1: ringMinX, z1: ringMinZ, x2: ringMaxX, z2: ringMinZ, width: ringWidth, axis: 'x', kind: 'perimeter' },
+    { x1: ringMinX, z1: ringMaxZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'x', kind: 'perimeter' },
+    { x1: ringMinX, z1: ringMinZ, x2: ringMinX, z2: ringMaxZ, width: ringWidth, axis: 'z', kind: 'perimeter' },
+    { x1: ringMaxX, z1: ringMinZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'z', kind: 'perimeter' },
   ];
 
   /* ---- surveyed city plate: the repository has a clear footprint ---- */
@@ -102,6 +102,7 @@ export function buildStreetNetwork(
       if (width < 0.15) continue;
       streets.push({ x1: (x1 + x2) / 2, z1: minZ, x2: (x1 + x2) / 2, z2: maxZ, width, axis: 'z' });
     }
+    streets.push(...buildDistrictCorridors(districts));
   }
 
   // If district bands completely cover the footprint, their gaps produce no
@@ -118,7 +119,19 @@ export function buildStreetNetwork(
     );
   }
 
-  streets.splice(0, streets.length, ...ringStreets, ...clipStreetsToPlots(streets, plots));
+  const edgeClearance = ringWidth * 1.25;
+  const clippedInternalStreets = clipStreetsToPlots(streets
+    .filter((street) => street.axis === 'x'
+      ? street.z1 > minZ + edgeClearance && street.z1 < maxZ - edgeClearance
+      : street.x1 > minX + edgeClearance && street.x1 < maxX - edgeClearance)
+    .map((street) => ({ ...street, kind: 'internal' as const })), plots);
+  const internalStreets = [...new Map(clippedInternalStreets
+    .filter((street) => streetLength(street) >= 2 && street.width >= 0.9)
+    .filter((street) => street.axis === 'x'
+      ? street.x1 > minX + edgeClearance && street.x2 < maxX - edgeClearance
+      : street.z1 > minZ + edgeClearance && street.z2 < maxZ - edgeClearance)
+    .map((street) => [streetKey(street), street])).values()];
+  streets.splice(0, streets.length, ...ringStreets, ...internalStreets);
 
   /* ---- road surface (dark) ---- */
   const roadPos: number[] = [];
@@ -305,6 +318,60 @@ function districtColor(name: string, target: THREE.Color): THREE.Color {
   for (let i = 0; i < name.length; i++) hash = Math.imul(hash ^ name.charCodeAt(i), 16777619);
   const palette = [0x00c8f0, 0xff2d8a, 0xffb347, 0x7f7cff];
   return target.setHex(palette[(hash >>> 0) % palette.length]);
+}
+
+export function buildDistrictCorridors(districts: readonly DistrictRect[]): StreetSegment[] {
+  const corridors: StreetSegment[] = [];
+  const seen = new Set<string>();
+  const addPair = (a: DistrictRect, b: DistrictRect) => {
+    const overlapX1 = Math.max(a.x, b.x);
+    const overlapX2 = Math.min(a.x + a.w, b.x + b.w);
+    const aBottom = a.z + a.d;
+    const bBottom = b.z + b.d;
+    const zGap = aBottom <= b.z ? [aBottom, b.z] : bBottom <= a.z ? [bBottom, a.z] : null;
+    if (zGap && overlapX2 - overlapX1 >= 4 && zGap[1] - zGap[0] >= 0.15) {
+      const street: StreetSegment = {
+        x1: overlapX1, z1: (zGap[0] + zGap[1]) / 2,
+        x2: overlapX2, z2: (zGap[0] + zGap[1]) / 2,
+        width: Math.min(3, zGap[1] - zGap[0]), axis: 'x',
+      };
+      const key = streetKey(street);
+      if (!seen.has(key)) { seen.add(key); corridors.push(street); }
+    }
+
+    const overlapZ1 = Math.max(a.z, b.z);
+    const overlapZ2 = Math.min(a.z + a.d, b.z + b.d);
+    const aRight = a.x + a.w;
+    const bRight = b.x + b.w;
+    const xGap = aRight <= b.x ? [aRight, b.x] : bRight <= a.x ? [bRight, a.x] : null;
+    if (xGap && overlapZ2 - overlapZ1 >= 4 && xGap[1] - xGap[0] >= 0.15) {
+      const street: StreetSegment = {
+        x1: (xGap[0] + xGap[1]) / 2, z1: overlapZ1,
+        x2: (xGap[0] + xGap[1]) / 2, z2: overlapZ2,
+        width: Math.min(3, xGap[1] - xGap[0]), axis: 'z',
+      };
+      const key = streetKey(street);
+      if (!seen.has(key)) { seen.add(key); corridors.push(street); }
+    }
+  };
+
+  for (const sorted of [
+    [...districts].sort((a, b) => a.z - b.z || a.x - b.x),
+    [...districts].sort((a, b) => a.x - b.x || a.z - b.z),
+  ]) {
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < Math.min(sorted.length, i + 9); j++) addPair(sorted[i], sorted[j]);
+    }
+  }
+  return corridors;
+}
+
+function streetKey(street: StreetSegment): string {
+  return `${street.axis}:${street.x1.toFixed(3)}:${street.z1.toFixed(3)}:${street.x2.toFixed(3)}:${street.z2.toFixed(3)}`;
+}
+
+function streetLength(street: StreetSegment): number {
+  return street.axis === 'x' ? street.x2 - street.x1 : street.z2 - street.z1;
 }
 
 export function clipStreetsToPlots(streets: readonly StreetSegment[], plots: readonly PlotRect[]): StreetSegment[] {

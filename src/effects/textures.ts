@@ -63,16 +63,19 @@ export function makeNeonSign(text: string, colorCss: string, w = 1024, h = 180):
   const ctx = c.getContext('2d')!;
   ctx.clearRect(0, 0, w, h);
 
+  ctx.fillStyle = 'rgba(4,7,18,0.66)';
+  ctx.fillRect(10, 10, w - 20, h - 20);
+
   // border
   ctx.strokeStyle = colorCss;
-  ctx.lineWidth = 6;
+  ctx.lineWidth = 5;
   ctx.shadowColor = colorCss;
   ctx.shadowBlur = 14;
   ctx.strokeRect(10, 10, w - 20, h - 20);
 
   // text
   const maxWidth = w - 52;
-  const fontSize = Math.floor(h * 0.42);
+  const fontSize = Math.floor(h * 0.54);
   ctx.font = `700 ${fontSize}px "JetBrains Mono", monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -90,7 +93,7 @@ export function makeNeonSign(text: string, colorCss: string, w = 1024, h = 180):
   };
 
   drawText(colorCss, 18);
-  drawText('rgba(255,255,255,0.62)', 8);
+  drawText('rgba(255,255,255,0.90)', 8);
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;

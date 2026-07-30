@@ -66,4 +66,12 @@ describe('seeded scene effects', () => {
     first.dispose();
     second.dispose();
   });
+
+  it('cycles through repository-derived vehicle colors', () => {
+    const palette = [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as const;
+    const traffic = buildTraffic(STREETS, random('0', 'ground-traffic'), 12, palette);
+    const colors = Array.from(traffic.mesh.instanceColor!.array);
+    expect(colors.slice(0, 9)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    traffic.dispose();
+  });
 });

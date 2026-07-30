@@ -57,4 +57,5 @@ export interface StreetSegment {
   z2: number;
   width: number;
   axis: 'x' | 'z';
+  kind?: 'perimeter' | 'internal';
 }

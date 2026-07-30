@@ -15,7 +15,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 
 import { fetchRepoTree } from './data/github';
 import type { FetchResult } from './data/github';
-import { buildLayout } from './city/layout';
+import { buildLayout, repositoryLandSize } from './city/layout';
 import type { LayoutCell } from './city/layout';
 import { buildCity } from './city/city';
 import type { CityData, Building } from './city/city';
@@ -315,14 +315,21 @@ async function loadRepo(
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     setStatus(`building city · ${result.selection.returnedFiles.toLocaleString()} files`, false, true);
+    const landSize = repositoryLandSize(result.selection.returnedFiles);
+    const layoutPadding = 0.35;
+    const layoutSize = landSize - 4 + layoutPadding;
     const cells = buildLayout(result.root, {
-      width: 200, height: 200, padding: 0.35, depthScale: 0.3,
+      width: layoutSize, height: layoutSize, padding: layoutPadding, depthScale: 0.3,
     }) as LayoutCell[];
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     teardown();
 
     const sceneIdentity = [result.repository.fullName, result.revision.commitSha, sceneSeed] as const;
+    const vehiclePalette = [...result.languages]
+      .sort((a, b) => b.bytes - a.bytes || (a.language < b.language ? -1 : 1))
+      .slice(0, 4)
+      .flatMap((entry, index) => Array.from({ length: 4 - index }, () => languageColor(entry.language)));
     sky = buildSky(createSceneRandom(...sceneIdentity, 'sky'));
     scene.add(sky.group);
 
@@ -335,13 +342,25 @@ async function loadRepo(
     cityOffsetZ = -cz;
     const citySize = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
     let viewMinX = Infinity, viewMaxX = -Infinity, viewMinZ = Infinity, viewMaxZ = -Infinity;
+    let visualCenterX = 0, visualCenterZ = 0, visualWeight = 0;
     for (const building of cityData.buildings) {
       viewMinX = Math.min(viewMinX, building.position[0] - building.scale[0] / 2);
       viewMaxX = Math.max(viewMaxX, building.position[0] + building.scale[0] / 2);
       viewMinZ = Math.min(viewMinZ, building.position[2] - building.scale[2] / 2);
       viewMaxZ = Math.max(viewMaxZ, building.position[2] + building.scale[2] / 2);
+      const weight = Math.max(0.01, building.scale[0] * building.scale[2]);
+      visualCenterX += building.position[0] * weight;
+      visualCenterZ += building.position[2] * weight;
+      visualWeight += weight;
     }
-    const viewSpan = Math.max(viewMaxX - viewMinX, viewMaxZ - viewMinZ);
+    visualCenterX /= visualWeight;
+    visualCenterZ /= visualWeight;
+    const viewSpan = 2 * Math.max(
+      visualCenterX - viewMinX,
+      viewMaxX - visualCenterX,
+      visualCenterZ - viewMinZ,
+      viewMaxZ - visualCenterZ,
+    );
 
     const cityRoot = new THREE.Group();
     cityRoot.name = 'cityRoot';
@@ -362,14 +381,14 @@ async function loadRepo(
 
     /* ── ground traffic ── */
     const groundTrafficCount = Math.min(60, Math.max(4, Math.ceil(cityData.buildings.length * 0.9)));
-    traffic = buildTraffic(streetNet.streets, createSceneRandom(...sceneIdentity, 'ground-traffic'), groundTrafficCount);
+    traffic = buildTraffic(streetNet.streets, createSceneRandom(...sceneIdentity, 'ground-traffic'), groundTrafficCount, vehiclePalette);
     cityRoot.add(traffic.mesh);
 
     scene.add(cityRoot);
 
     /* ── flying traffic follows parcel-cleared street canyons ── */
     const flyingTrafficCount = Math.min(48, Math.max(2, Math.ceil(cityData.buildings.length * 0.65)));
-    flying = buildFlyingTraffic(streetNet.streets, cityData.maxHeight, createSceneRandom(...sceneIdentity, 'flying-traffic'), flyingTrafficCount);
+    flying = buildFlyingTraffic(streetNet.streets, cityData.maxHeight, createSceneRandom(...sceneIdentity, 'flying-traffic'), flyingTrafficCount, vehiclePalette);
     cityRoot.add(flying.mesh);
 
     /* ── atmosphere + particles + billboards ── */
@@ -379,10 +398,29 @@ async function loadRepo(
     embers = buildEmbers(citySize, createSceneRandom(...sceneIdentity, 'embers'));
     scene.add(embers.points);
 
-    const billboardBlocks: BillboardBlock[] = districts.map((rect) => {
+    const billboardDistricts = [...districts];
+    const rootCells = cells.filter((cell) => !cell.node.path.includes('/'));
+    if (rootCells.length > 0) {
+      const rootBounds = rootCells.reduce((bounds, cell) => ({
+        minX: Math.min(bounds.minX, cell.rect.x),
+        minZ: Math.min(bounds.minZ, cell.rect.y),
+        maxX: Math.max(bounds.maxX, cell.rect.x + cell.rect.w),
+        maxZ: Math.max(bounds.maxZ, cell.rect.y + cell.rect.h),
+      }), { minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity });
+      billboardDistricts.push({
+        x: rootBounds.minX,
+        z: rootBounds.minZ,
+        w: rootBounds.maxX - rootBounds.minX,
+        d: rootBounds.maxZ - rootBounds.minZ,
+        depth: 0,
+        name: 'repository root',
+      });
+    }
+    const billboardBlocks: BillboardBlock[] = billboardDistricts.map((rect) => {
       const languageBytes = new Map<string, number>();
       let height = 0;
       for (const building of cityData!.buildings) {
+        if (rect.depth === 0 && building.path.includes('/')) continue;
         const inside = building.position[0] >= rect.x &&
           building.position[0] <= rect.x + rect.w &&
           building.position[2] >= rect.z &&
@@ -411,13 +449,20 @@ async function loadRepo(
     cityRoot.add(billboards.group);
 
     /* ── camera + UI ── */
-    const repositoryCameraView = repositoryView(viewSpan, cityData.maxHeight, camera.aspect);
+    const repositoryCameraView = repositoryView(viewSpan, cityData.maxHeight, window.innerWidth / window.innerHeight);
     controls.maxDistance = Math.max(citySize * 3, (repositoryCameraView.targetDist ?? 0) * 1.15, 250);
     controls.target.set(0, 5, 0);
     flythrough = createFlythrough(camera, {
-      minX: viewMinX - cx, maxX: viewMaxX - cx,
-      minZ: viewMinZ - cz, maxZ: viewMaxZ - cz,
+      minX: visualCenterX - viewSpan / 2 - cx,
+      maxX: visualCenterX + viewSpan / 2 - cx,
+      minZ: visualCenterZ - viewSpan / 2 - cz,
+      maxZ: visualCenterZ + viewSpan / 2 - cz,
     }, repositoryCameraView);
+    billboards.update(camera, appliedHeight || window.innerHeight);
+    renderer.compile(scene, camera);
+    composer.render(0);
+    clock.getDelta();
+    motionAccumulator = 0;
     controls.enabled = false;
 
     activeResult = result;
@@ -434,9 +479,10 @@ async function loadRepo(
     sidebarEl.classList.add('visible');
     captureBtn.disabled = false;
     captureHeaderBtn.disabled = false;
+    const buildingLabel = cells.length === 1 ? 'building' : 'buildings';
     const selectionLabel = result.coverage.selection === 'sampled'
-      ? `${cells.length.toLocaleString()} buildings from a deterministic sample.`
-      : `${cells.length.toLocaleString()} buildings rendered.`;
+      ? `${cells.length.toLocaleString()} ${buildingLabel} from a deterministic sample.`
+      : `${cells.length.toLocaleString()} ${buildingLabel} rendered.`;
     setStatus(selectionLabel);
   } catch (err: unknown) {
     if (controller.signal.aborted || sequence !== loadSequence) return;
@@ -588,7 +634,7 @@ function animate(): void {
     flying?.update(motionDt);
     embers?.update(motionDt);
   }
-  billboards?.update(dt);
+  billboards?.update(camera, appliedHeight || window.innerHeight);
   atmosphere?.update(dt);
   sky?.update(dt);
 

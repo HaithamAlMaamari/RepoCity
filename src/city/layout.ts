@@ -65,6 +65,11 @@ const DEFAULT_OPTIONS: NormalizedOptions = {
   depthScale: 0.3,
 };
 
+export function repositoryLandSize(renderedFileCount: number): number {
+  const count = Math.max(1, Math.floor(renderedFileCount));
+  return Math.min(240, Math.max(32, Math.round((16 + 14 * Math.sqrt(count)) * 2) / 2));
+}
+
 /**
  * Build a squarified treemap layout for the given file tree.
  *

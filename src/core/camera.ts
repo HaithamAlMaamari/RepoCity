@@ -18,7 +18,7 @@ export interface Flythrough {
 }
 
 export function repositoryView(span: number, maxHeight: number, aspect = 16 / 9): Pick<FlythroughOptions, 'targetY' | 'targetDist' | 'targetFocusY'> {
-  const widthScale = Math.max(1.55, 1.6 / Math.max(0.4, aspect));
+  const widthScale = Math.max(1.55, 1.65 / Math.max(0.4, aspect));
   return {
     targetY: Math.max(30, maxHeight * 0.9),
     targetDist: Math.max(52, span * widthScale, maxHeight * 1.75),
@@ -41,20 +41,14 @@ export function createFlythrough(
   const targetFocusY = Math.max(0, options?.targetFocusY ?? 4);
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minZ + bounds.maxZ) / 2;
-  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
-
-  const p0 = new THREE.Vector3(cx + span * 1.4, span * 2.2, cz + span * 1.4);
-  const p1 = new THREE.Vector3(cx + span * 0.9, span * 0.20, cz - span * 0.9);
+  const orbitTarget = new THREE.Vector3(cx, targetFocusY, cz);
+  const p0 = new THREE.Vector3(cx + targetDist * 0.85, targetY * 1.35, cz + targetDist * 1.32);
+  const p1 = new THREE.Vector3(cx + targetDist * 0.68, targetY * 1.15, cz + targetDist * 1.05);
   const p2 = new THREE.Vector3(cx + targetDist * 0.55, targetY, cz + targetDist * 0.85);
   const path = new THREE.CatmullRomCurve3([p0, p1, p2], false, 'catmullrom', 0.4);
 
-  const t0 = new THREE.Vector3(cx, Math.max(4, targetFocusY * 0.5), cz);
-  const t1 = new THREE.Vector3(cx, targetFocusY, cz);
-  const orbitTarget = t1.clone();
-  const currentTarget = t0.clone();
-
   camera.position.copy(p0);
-  camera.lookAt(currentTarget);
+  camera.lookAt(orbitTarget);
 
   let elapsed = 0;
   let active = true;
@@ -66,16 +60,14 @@ export function createFlythrough(
       const raw = Math.min(elapsed / duration, 1);
       const k = easeInOutCubic(raw);
       path.getPoint(k, camera.position);
-      currentTarget.lerpVectors(t0, t1, k);
-      camera.lookAt(currentTarget);
+      camera.lookAt(orbitTarget);
       if (raw >= 1) { active = false; return false; }
       return true;
     },
     skip(): void {
       active = false;
       camera.position.copy(p2);
-      currentTarget.copy(t1);
-      camera.lookAt(currentTarget);
+      camera.lookAt(orbitTarget);
     },
     getOrbitTarget(): THREE.Vector3 {
       return orbitTarget.clone();

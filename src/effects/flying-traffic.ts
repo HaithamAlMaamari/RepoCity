@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import type { RandomSource } from '../core/random';
-import type { StreetSegment } from '../types';
+import type { RGB, StreetSegment } from '../types';
 
 export interface FlyingTraffic {
   mesh: THREE.InstancedMesh;
@@ -20,12 +20,21 @@ interface AirCar {
   travel: number; travelMin: number; travelMax: number;
   lane: number; y: number; speed: number;
   len: number;
+  color: RGB;
 }
 
-export function buildFlyingTraffic(streets: StreetSegment[], maxBuildingHeight: number, random: RandomSource, desiredCount = 48): FlyingTraffic {
+const DEFAULT_PALETTE: readonly RGB[] = [[0.38, 0.87, 1]];
+
+export function buildFlyingTraffic(
+  streets: StreetSegment[],
+  maxBuildingHeight: number,
+  random: RandomSource,
+  desiredCount = 48,
+  palette: readonly RGB[] = DEFAULT_PALETTE,
+): FlyingTraffic {
   const geo = new THREE.BoxGeometry(1.6, 0.5, 0.8);
   const mat = new THREE.MeshBasicMaterial({
-    color: 0x61dfff, depthWrite: false, fog: false,
+    color: 0xffffff, vertexColors: true, depthWrite: false, fog: false,
     toneMapped: false,
   });
 
@@ -54,8 +63,13 @@ export function buildFlyingTraffic(streets: StreetSegment[], maxBuildingHeight: 
       y: 10 + random() * altitudeRange,
       speed: (random() < 0.5 ? 1 : -1) * (20 + random() * 16),
       len: 0.8 + random() * 0.5,
+      color: palette[i % Math.max(1, palette.length)] ?? DEFAULT_PALETTE[0],
     });
   }
+
+  const color = new THREE.Color();
+  for (let i = 0; i < cars.length; i++) mesh.setColorAt(i, color.setRGB(...cars[i].color));
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
   const d = new THREE.Object3D();
   const update = (dt: number) => {
