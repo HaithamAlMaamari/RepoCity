@@ -216,7 +216,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
       mesh, buildings: [], bounds: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 }, maxHeight: 0,
       details: buildArchitectureDetails([]),
       update() {}, setHovered() {}, setSelected() {}, setMatchMask() {},
-      dispose() { g.dispose(); m.dispose(); },
+      dispose() { mesh.dispose(); g.dispose(); m.dispose(); },
     };
   }
 
@@ -237,27 +237,36 @@ export function buildCity(cells: LayoutCell[]): CityData {
   const aBase = new Float32Array(n * 3);
   const aMatch = new Float32Array(n).fill(1);
   let maxHeight = 0;
+  const rankedIndices = [...Array(n).keys()].sort((a, b) => {
+    const sizeOrder = cells[a].node.size - cells[b].node.size;
+    return sizeOrder || (cells[a].node.path < cells[b].node.path ? -1 : cells[a].node.path > cells[b].node.path ? 1 : 0);
+  });
+  const rankByIndex = new Uint32Array(n);
+  for (let rank = 0; rank < n; rank++) rankByIndex[rankedIndices[rank]] = rank;
+  const landmarkCount = Math.min(n, 16, Math.max(3, Math.ceil(n * 0.05)));
+  const ordinaryCount = n - landmarkCount;
 
   for (let i = 0; i < n; i++) {
     const c = cells[i];
     const r = c.rect;
     const lang = c.node.language ?? detectLang(c.node.name);
     const rawSize = c.node.size;
-    const visualSize = Math.max(rawSize, 1);
-    const t = Math.min(Math.log10(visualSize) / 6, 1);
-    const h = 0.6 + Math.pow(t, 0.55) * 34;
-    const jitter = 1.0 + (signHash(i * 3 + 17) - 0.5) * 0.3;
-    const totalHeight = Math.max(0.6, h * jitter);
+    const rank = rankByIndex[i];
+    const percentile = n > 1 ? rank / (n - 1) : 1;
+    const totalHeight = rank >= ordinaryCount
+      ? 48 + 24 * ((rank - ordinaryCount) / Math.max(1, landmarkCount - 1))
+      : 6 + 24 * Math.pow(rank / Math.max(1, ordinaryCount - 1), 1.5);
     const profile: Building['profile'] =
-      t < 0.22 ? 'block' : t < 0.48 ? 'setback' : t < 0.76 ? 'tower' : 'mega';
+      rank >= ordinaryCount ? 'mega' : percentile < 0.4 ? 'block' : percentile < 0.7 ? 'setback' : 'tower';
     const coreRatio = profile === 'block' ? 1 : profile === 'setback' ? 0.76 : profile === 'tower' ? 0.82 : 0.52;
     const coreHeight = totalHeight * coreRatio;
+    const footprintScale = Math.min(0.9, 12 / Math.max(r.w, r.h));
     if (totalHeight > maxHeight) maxHeight = totalHeight;
 
     const col = languageColor(lang);
     buildings[i] = {
       position: [r.x + r.w / 2, coreHeight / 2, r.y + r.h / 2],
-      scale: [r.w * 0.9, coreHeight, r.h * 0.9],
+      scale: [r.w * footprintScale, coreHeight, r.h * footprintScale],
       parcel: [r.w, r.h],
       color: col,
       path: c.node.path, size: rawSize, language: lang, totalHeight, profile,
@@ -333,6 +342,6 @@ export function buildCity(cells: LayoutCell[]): CityData {
       for (let i = 0; i < n; i++) aMatch[i] = mask[i] ?? 0;
       matchAttribute.needsUpdate = true;
     },
-    dispose() { geo.dispose(); material.dispose(); details.dispose(); },
+    dispose() { mesh.dispose(); geo.dispose(); material.dispose(); details.dispose(); },
   };
 }

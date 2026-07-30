@@ -27,6 +27,20 @@ export function buildStreetNetwork(
 
   const { minX, maxX, minZ, maxZ } = cityBounds;
 
+  // Every repository gets a connected transit ring in the two-unit margin
+  // around the treemap, so small or tightly packed cities still have roads.
+  const ringWidth = 1.9;
+  const ringMinX = minX + ringWidth / 2;
+  const ringMaxX = maxX - ringWidth / 2;
+  const ringMinZ = minZ + ringWidth / 2;
+  const ringMaxZ = maxZ - ringWidth / 2;
+  const ringStreets: StreetSegment[] = [
+    { x1: ringMinX, z1: ringMinZ, x2: ringMaxX, z2: ringMinZ, width: ringWidth, axis: 'x' },
+    { x1: ringMinX, z1: ringMaxZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'x' },
+    { x1: ringMinX, z1: ringMinZ, x2: ringMinX, z2: ringMaxZ, width: ringWidth, axis: 'z' },
+    { x1: ringMaxX, z1: ringMinZ, x2: ringMaxX, z2: ringMaxZ, width: ringWidth, axis: 'z' },
+  ];
+
   /* ---- surveyed city plate: the repository has a clear footprint ---- */
   const plateGeo = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ);
   plateGeo.rotateX(-Math.PI / 2);
@@ -104,7 +118,7 @@ export function buildStreetNetwork(
     );
   }
 
-  streets.splice(0, streets.length, ...clipStreetsToPlots(streets, plots));
+  streets.splice(0, streets.length, ...ringStreets, ...clipStreetsToPlots(streets, plots));
 
   /* ---- road surface (dark) ---- */
   const roadPos: number[] = [];
@@ -177,15 +191,16 @@ export function buildStreetNetwork(
     for (const sz of streets) {
       if (sz.axis !== 'z') continue;
       if (points.length >= 80) break;
+      if (sz.x1 < sx.x1 || sz.x1 > sx.x2 || sx.z1 < sz.z1 || sx.z1 > sz.z2) continue;
       points.push({ x: sz.x1, z: sx.z1 });
     }
     if (points.length >= 80) break;
   }
   if (points.length > 0) {
-    const gGeo = new THREE.PlaneGeometry(3.2, 3.2);
+    const gGeo = new THREE.PlaneGeometry(4.5, 4.5);
     gGeo.rotateX(-Math.PI / 2);
     const gMat = new THREE.MeshBasicMaterial({
-      map: glowTex, transparent: true, opacity: 0.16,
+      map: glowTex, transparent: true, opacity: 0.34,
       blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
       vertexColors: true,
     });
@@ -205,7 +220,7 @@ export function buildStreetNetwork(
     gMesh.frustumCulled = false;
     gMesh.renderOrder = 1;
     group.add(gMesh);
-    disposables.push(gGeo, gMat);
+    disposables.push(gMesh, gGeo, gMat);
   }
 
   /* ---- district survey perimeters and corner extent markers ---- */
@@ -276,7 +291,7 @@ export function buildStreetNetwork(
     posts.frustumCulled = false;
     beacons.frustumCulled = false;
     group.add(posts, beacons);
-    disposables.push(postGeo, postMat, beaconGeo, beaconMat);
+    disposables.push(posts, beacons, postGeo, postMat, beaconGeo, beaconMat);
   }
 
   return {

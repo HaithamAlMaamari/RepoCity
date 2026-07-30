@@ -23,7 +23,7 @@ import { buildRooftops } from './city/rooftops';
 import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
 import { languageColor, languageDisplayName } from './city/palette';
-import { createFlythrough } from './core/camera';
+import { createFlythrough, repositoryView } from './core/camera';
 import type { Flythrough } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
@@ -123,9 +123,23 @@ let cityOffsetZ = 0;
 /* ═══ Interaction state ═════════════════════════════════ */
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+const pickHits: THREE.Intersection[] = [];
 const clock = new THREE.Clock();
 let hoveredId = -1;
 let lastInteraction = 0;
+let pendingPointerX = 0;
+let pendingPointerY = 0;
+let pointerPickPending = false;
+let pointerInside = false;
+let orbiting = false;
+let resizePending = false;
+let appliedWidth = 0;
+let appliedHeight = 0;
+let appliedPixelRatio = 0;
+let motionAccumulator = 0;
+let pixelRatioCheckAccumulator = 0;
+const MAX_RENDER_PIXELS = 3840 * 2160;
+const MOTION_STEP = 1 / 120;
 
 /* ═══ Init ══════════════════════════════════════════════ */
 async function init(): Promise<void> {
@@ -135,8 +149,11 @@ async function init(): Promise<void> {
     canvas, antialias: false, alpha: false,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+  appliedPixelRatio = calculatePixelRatio(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(appliedPixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  appliedWidth = window.innerWidth;
+  appliedHeight = window.innerHeight;
   renderer.setClearColor(0x0a0818);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.88;
@@ -179,7 +196,16 @@ async function init(): Promise<void> {
   controls.maxPolarAngle = Math.PI / 2 - 0.04;
   controls.target.set(0, 5, 0);
   const bump = () => { lastInteraction = clock.elapsedTime; };
-  controls.addEventListener('start', bump);
+  controls.addEventListener('start', () => {
+    orbiting = true;
+    pointerPickPending = false;
+    updateHoveredBuilding(-1);
+    bump();
+  });
+  controls.addEventListener('end', () => {
+    orbiting = false;
+    pointerPickPending = pointerInside;
+  });
   renderer.domElement.addEventListener('wheel', bump, { passive: true });
 
   /* post-processing */
@@ -201,26 +227,10 @@ async function init(): Promise<void> {
         gl_FragColor = mix(c, vec4(0.0,0.0,0.0,1.0), v * 0.42);
       }`,
   });
-  const chroma = new ShaderPass({
-    uniforms: { tDiffuse: { value: null } },
-    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tDiffuse;
-      void main(){
-        vec2 cdir = vUv - 0.5;
-        float d = length(cdir);
-        vec2 off = normalize(cdir + 1e-6) * d * 0.012;
-        float r = texture2D(tDiffuse, vUv + off).r;
-        float g = texture2D(tDiffuse, vUv).g;
-        float b = texture2D(tDiffuse, vUv - off).b;
-        gl_FragColor = vec4(r, g, b, 1.0);
-      }`,
-  });
   composer = new EffectComposer(renderer);
   composer.addPass(renderPass);
   composer.addPass(bloom);
   composer.addPass(vignette);
-  // Chromatic aberration is intentionally not in the default pipeline: it is
-  // a full-screen pass with little scene value and costs performance on iGPUs.
   vignette.renderToScreen = true;
 
   /* events */
@@ -228,11 +238,15 @@ async function init(): Promise<void> {
   repoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleGo(); });
   captureBtn.addEventListener('click', capturePoster);
   captureHeaderBtn.addEventListener('click', capturePoster);
-  window.addEventListener('resize', handleResize);
+  window.addEventListener('resize', scheduleResize);
   window.addEventListener('hashchange', handleHashChange);
+  document.addEventListener('visibilitychange', () => {
+    clock.getDelta();
+    motionAccumulator = 0;
+  });
   canvas.addEventListener('pointermove', handlePointerMove);
   canvas.addEventListener('click', handleClick);
-  canvas.addEventListener('pointerleave', () => setHovered(-1));
+  canvas.addEventListener('pointerleave', handlePointerLeave);
   explorerToggleEl.addEventListener('click', toggleExplorer);
   mobileExplorerMedia.addEventListener('change', syncExplorerForViewport);
   summaryToggleEl.addEventListener('click', toggleSummary);
@@ -320,6 +334,14 @@ async function loadRepo(
     cityOffsetX = -cx;
     cityOffsetZ = -cz;
     const citySize = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
+    let viewMinX = Infinity, viewMaxX = -Infinity, viewMinZ = Infinity, viewMaxZ = -Infinity;
+    for (const building of cityData.buildings) {
+      viewMinX = Math.min(viewMinX, building.position[0] - building.scale[0] / 2);
+      viewMaxX = Math.max(viewMaxX, building.position[0] + building.scale[0] / 2);
+      viewMinZ = Math.min(viewMinZ, building.position[2] - building.scale[2] / 2);
+      viewMaxZ = Math.max(viewMaxZ, building.position[2] + building.scale[2] / 2);
+    }
+    const viewSpan = Math.max(viewMaxX - viewMinX, viewMaxZ - viewMinZ);
 
     const cityRoot = new THREE.Group();
     cityRoot.name = 'cityRoot';
@@ -339,14 +361,16 @@ async function loadRepo(
     cityRoot.add(streetNet.group);
 
     /* ── ground traffic ── */
-    traffic = buildTraffic(streetNet.streets, createSceneRandom(...sceneIdentity, 'ground-traffic'));
+    const groundTrafficCount = Math.min(60, Math.max(4, Math.ceil(cityData.buildings.length * 0.9)));
+    traffic = buildTraffic(streetNet.streets, createSceneRandom(...sceneIdentity, 'ground-traffic'), groundTrafficCount);
     cityRoot.add(traffic.mesh);
 
     scene.add(cityRoot);
 
-    /* ── flying traffic (world space, city is centered) ── */
-    flying = buildFlyingTraffic(citySize, createSceneRandom(...sceneIdentity, 'flying-traffic'));
-    scene.add(flying.mesh);
+    /* ── flying traffic follows parcel-cleared street canyons ── */
+    const flyingTrafficCount = Math.min(48, Math.max(2, Math.ceil(cityData.buildings.length * 0.65)));
+    flying = buildFlyingTraffic(streetNet.streets, cityData.maxHeight, createSceneRandom(...sceneIdentity, 'flying-traffic'), flyingTrafficCount);
+    cityRoot.add(flying.mesh);
 
     /* ── atmosphere + particles + billboards ── */
     atmosphere = buildAtmosphere(citySize, cityData.maxHeight);
@@ -387,12 +411,13 @@ async function loadRepo(
     cityRoot.add(billboards.group);
 
     /* ── camera + UI ── */
-    controls.maxDistance = Math.max(citySize * 3, 250);
+    const repositoryCameraView = repositoryView(viewSpan, cityData.maxHeight, camera.aspect);
+    controls.maxDistance = Math.max(citySize * 3, (repositoryCameraView.targetDist ?? 0) * 1.15, 250);
     controls.target.set(0, 5, 0);
     flythrough = createFlythrough(camera, {
-      minX: b.minX - cx, maxX: b.maxX - cx,
-      minZ: b.minZ - cz, maxZ: b.maxZ - cz,
-    });
+      minX: viewMinX - cx, maxX: viewMaxX - cx,
+      minZ: viewMinZ - cz, maxZ: viewMaxZ - cz,
+    }, repositoryCameraView);
     controls.enabled = false;
 
     activeResult = result;
@@ -416,7 +441,16 @@ async function loadRepo(
   } catch (err: unknown) {
     if (controller.signal.aborted || sequence !== loadSequence) return;
     console.error(err);
-    setStatus((err as Error)?.message ?? 'unknown error', true);
+    const message = (err as Error)?.message ?? 'unknown error';
+    if (activeResult && cityData) {
+      repoInput.value = activeResult.repository.fullName;
+      const selectedPath = cityData.buildings[selectedBuildingId]?.path;
+      replaceSelectionHash(selectedPath);
+      setStatus(`Could not load ${repo}; still showing ${activeResult.repository.fullName}.`, true);
+      selectionStatusEl.textContent = message;
+    } else {
+      setStatus(message, true);
+    }
   } finally {
     if (sequence === loadSequence) {
       activeLoadController = null;
@@ -487,7 +521,7 @@ function teardown(): void {
   if (rooftops) { rooftops.dispose(); rooftops = null; }
   if (streetNet) { streetNet.dispose(); streetNet = null; }
   if (traffic) { traffic.dispose(); traffic = null; }
-  if (flying) { scene.remove(flying.mesh); flying.dispose(); flying = null; }
+  if (flying) { flying.mesh.removeFromParent(); flying.dispose(); flying = null; }
   if (embers) { scene.remove(embers.points); embers.dispose(); embers = null; }
   if (billboards) { scene.remove(billboards.group); billboards.dispose(); billboards = null; }
   if (atmosphere) { scene.remove(atmosphere.group); atmosphere.dispose(); atmosphere = null; }
@@ -501,11 +535,19 @@ function teardown(): void {
   explorerCoverageEl.textContent = 'Load a repository to inspect its rendered files.';
   treeEmptyEl.hidden = true;
   hideInfo();
+  motionAccumulator = 0;
 }
 
 /* ═══ Render loop ═══════════════════════════════════════ */
 function animate(): void {
   const dt = Math.min(clock.getDelta(), 0.1);
+  if (document.hidden) return;
+  pixelRatioCheckAccumulator += dt;
+  if (pixelRatioCheckAccumulator >= 1) {
+    pixelRatioCheckAccumulator = 0;
+    if (calculatePixelRatio(window.innerWidth, window.innerHeight) !== appliedPixelRatio) resizePending = true;
+  }
+  applyPendingResize();
 
   if (flythrough) {
     const active = flythrough.update(dt);
@@ -531,42 +573,66 @@ function animate(): void {
     }
   }
 
+  if (pointerPickPending && !orbiting) {
+    pointerPickPending = false;
+    updateHoveredBuilding(pickAt(pendingPointerX, pendingPointerY));
+  }
+
   cityData?.update(dt);
-  rooftops?.update(dt);
-  traffic?.update(dt);
-  flying?.update(dt);
-  embers?.update(dt);
+  motionAccumulator += dt;
+  if (motionAccumulator >= MOTION_STEP) {
+    const motionDt = motionAccumulator;
+    motionAccumulator = 0;
+    rooftops?.update(motionDt);
+    traffic?.update(motionDt);
+    flying?.update(motionDt);
+    embers?.update(motionDt);
+  }
   billboards?.update(dt);
   atmosphere?.update(dt);
   sky?.update(dt);
 
-  composer.render();
+  composer.render(dt);
 }
 
 /* ═══ Picking ═══════════════════════════════════════════ */
-function pick(event: { clientX: number; clientY: number }): number {
+function pickAt(clientX: number, clientY: number): number {
   if (!cityData) return -1;
-  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  pointer.x = (clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObject(cityData.mesh);
-  for (const hit of hits) {
+  pickHits.length = 0;
+  raycaster.intersectObject(cityData.mesh, false, pickHits);
+  for (const hit of pickHits) {
     if (hit.instanceId !== undefined && explorerView?.matchMask[hit.instanceId] === 1) return hit.instanceId;
   }
   return -1;
 }
 
 function handlePointerMove(e: PointerEvent): void {
-  const id = pick(e);
+  pointerInside = true;
+  pendingPointerX = e.clientX;
+  pendingPointerY = e.clientY;
+  pointerPickPending = true;
+}
+
+function updateHoveredBuilding(id: number): void {
   if (id !== hoveredId) {
     setHovered(id);
     canvas.style.cursor = id >= 0 ? 'pointer' : 'default';
   }
 }
 
+function handlePointerLeave(): void {
+  pointerInside = false;
+  pointerPickPending = false;
+  updateHoveredBuilding(-1);
+}
+
 function handleClick(e: MouseEvent): void {
   if (e.button !== 0) return;
-  const id = pick(e);
+  pointerPickPending = false;
+  const id = pickAt(e.clientX, e.clientY);
   if (id >= 0 && cityData) {
     selectBuilding(id, { focusCamera: false, updateUrl: true, announce: true });
   } else {
@@ -1085,13 +1151,33 @@ async function capturePoster(): Promise<void> {
 }
 
 /* ═══ Resize / helpers ══════════════════════════════════ */
-function handleResize(): void {
-  if (!renderer || !camera) return;
+function scheduleResize(): void {
+  resizePending = true;
+}
+
+function applyPendingResize(): void {
+  if (!resizePending || !renderer || !camera) return;
+  resizePending = false;
   const w = window.innerWidth, h = window.innerHeight;
+  const pixelRatio = calculatePixelRatio(w, h);
+  if (w === appliedWidth && h === appliedHeight && pixelRatio === appliedPixelRatio) return;
+  if (pixelRatio !== appliedPixelRatio) {
+    renderer.setPixelRatio(pixelRatio);
+    composer.setPixelRatio(pixelRatio);
+    appliedPixelRatio = pixelRatio;
+  }
   renderer.setSize(w, h);
   composer.setSize(w, h);
+  appliedWidth = w;
+  appliedHeight = h;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+}
+
+function calculatePixelRatio(width: number, height: number): number {
+  const preferred = Math.min(window.devicePixelRatio, 1.25);
+  const pixelCap = Math.sqrt(MAX_RENDER_PIXELS / Math.max(1, width * height));
+  return Math.max(0.5, Math.min(preferred, pixelCap));
 }
 
 function setStatus(msg: string, isErr = false, pulse = false): void {

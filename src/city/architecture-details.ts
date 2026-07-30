@@ -144,7 +144,7 @@ function addBoxes(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   group.add(mesh);
-  disposables.push(geometry);
+  disposables.push(mesh, geometry);
   // The material is shared by all boxes in this layer and disposed once by
   // the caller's disposable list.
   if (!disposables.includes(material)) disposables.push(material);
@@ -182,7 +182,7 @@ function addCrownBoxes(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   group.add(mesh);
-  disposables.push(geometry);
+  disposables.push(mesh, geometry);
   if (!disposables.includes(material)) disposables.push(material);
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
@@ -271,7 +271,7 @@ function addSpires(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
   group.add(mesh);
-  disposables.push(geometry);
+  disposables.push(mesh, geometry);
   if (!disposables.includes(material)) disposables.push(material);
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
@@ -327,7 +327,7 @@ function addStripsMesh(
   mesh.frustumCulled = false;
   mesh.renderOrder = 2;
   group.add(mesh);
-  disposables.push(geometry, material);
+  disposables.push(mesh, geometry, material);
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
 

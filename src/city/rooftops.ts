@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import type { Building } from './city';
 import { signHash } from './city';
+import { makeRadialGlow } from '../effects/textures';
 
 export interface Rooftops {
   group: THREE.Group;
@@ -20,54 +21,46 @@ export interface Rooftops {
 interface BeaconSpec {
   ownerId: number;
   x: number; y: number; z: number;
-  scale: number;
   base: THREE.Color;
   rate: number;
   phase: number;
 }
 
-export function buildRooftops(buildings: Building[], maxHeight: number): Rooftops {
+export function buildRooftops(buildings: Building[], _maxHeight: number): Rooftops {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
 
-  /* ---- pick tall buildings ---- */
-  const tallThreshold = maxHeight * 0.30;
   const specs: BeaconSpec[] = [];
   const pylons: { ownerId: number; x: number; y: number; z: number; h: number; scale: number }[] = [];
+  const antennaCount = Math.min(48, Math.max(6, Math.ceil(buildings.length * 0.08)), buildings.length);
+  const antennaOwners = [...Array(buildings.length).keys()]
+    .sort((a, b) => buildings[b].totalHeight - buildings[a].totalHeight || (buildings[a].path < buildings[b].path ? -1 : 1))
+    .slice(0, antennaCount);
 
-  for (let i = 0; i < buildings.length; i++) {
+  for (const i of antennaOwners) {
     const b = buildings[i];
-    if (b.totalHeight < tallThreshold) continue;
-    const roll = signHash(i * 13 + 7);
-    if (roll > 0.55) continue; // ~55% of tall buildings
 
     const ox = (signHash(i * 41 + 9) - 0.5) * b.scale[0] * 0.4;
     const oz = (signHash(i * 47 + 17) - 0.5) * b.scale[2] * 0.4;
     const roofY = b.position[1] - b.scale[1] / 2 + b.totalHeight;
     const pylonH = 1.2 + signHash(i * 19 + 11) * 3.4;
 
-    const roofScale = Math.min(1, b.parcel[0] * 0.98 / 0.44, b.parcel[1] * 0.98 / 0.44);
-    const roofRadius = 0.22 * roofScale;
+    const roofScale = Math.min(1, b.parcel[0] * 0.90 / 0.16, b.parcel[1] * 0.90 / 0.16);
+    const roofRadius = 0.08 * roofScale;
     const x = Math.max(b.position[0] - b.parcel[0] * 0.49 + roofRadius, Math.min(b.position[0] + b.parcel[0] * 0.49 - roofRadius, b.position[0] + ox));
     const z = Math.max(b.position[2] - b.parcel[1] * 0.49 + roofRadius, Math.min(b.position[2] + b.parcel[1] * 0.49 - roofRadius, b.position[2] + oz));
 
     pylons.push({ ownerId: i, x, y: roofY, z, h: pylonH, scale: roofScale });
 
-    // ~80% of pylons get a blinking beacon
-    if (signHash(i * 29 + 5) > 0.2) {
-      const c = new THREE.Color();
-      const hue = signHash(i * 31 + 23);
-      if (hue < 0.45) c.setRGB(1.0, 0.15, 0.45);       // magenta-red
-      else if (hue < 0.85) c.setRGB(0.1, 0.85, 1.1);   // cyan
-      else c.setRGB(1.0, 0.65, 0.2);                    // amber
+    {
+      const c = new THREE.Color().setRGB(b.color[0] * 1.5, b.color[1] * 1.5, b.color[2] * 1.5);
       specs.push({
         ownerId: i,
         x,
         y: roofY + pylonH + 0.15,
         z,
-        scale: roofScale,
         base: c,
-        rate: 0.5 + signHash(i * 37 + 3) * 1.4,
+        rate: 0.22 + signHash(i * 37 + 3) * 0.16,
         phase: signHash(i * 53 + 29) * Math.PI * 2,
       });
     }
@@ -94,55 +87,72 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
     pylonMesh.instanceMatrix.needsUpdate = true;
     pylonMesh.frustumCulled = false;
     group.add(pylonMesh);
-    disposables.push(pyGeo, pyMat);
+    disposables.push(pylonMesh, pyGeo, pyMat);
   }
 
-  /* ---- beacon mesh (blinking) ---- */
-  let beaconMesh: THREE.InstancedMesh | null = null;
+  /* ---- fixed-screen beacon cores and halos ---- */
+  let beaconPosition: THREE.BufferAttribute | null = null;
+  let beaconColor: THREE.BufferAttribute | null = null;
   if (specs.length > 0) {
-    const bGeo = new THREE.SphereGeometry(0.22, 8, 6);
-    const bMat = new THREE.MeshBasicMaterial({
-      transparent: true, depthWrite: false,
+    const positions = new Float32Array(specs.length * 3);
+    const colors = new Float32Array(specs.length * 3);
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i];
+      positions[i * 3] = spec.x;
+      positions[i * 3 + 1] = spec.y;
+      positions[i * 3 + 2] = spec.z;
+      colors[i * 3] = spec.base.r * 0.05;
+      colors[i * 3 + 1] = spec.base.g * 0.05;
+      colors[i * 3 + 2] = spec.base.b * 0.05;
+    }
+    const geometry = new THREE.BufferGeometry();
+    beaconPosition = new THREE.BufferAttribute(positions, 3);
+    beaconPosition.setUsage(THREE.DynamicDrawUsage);
+    beaconColor = new THREE.BufferAttribute(colors, 3);
+    beaconColor.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('position', beaconPosition);
+    geometry.setAttribute('color', beaconColor);
+    const texture = makeRadialGlow(64);
+    const coreMaterial = new THREE.PointsMaterial({
+      map: texture, size: 8, sizeAttenuation: false, transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending, fog: true,
       vertexColors: true,
+      toneMapped: false,
     });
-    beaconMesh = new THREE.InstancedMesh(bGeo, bMat, specs.length);
-    beaconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    const d = new THREE.Object3D();
-    const c = new THREE.Color();
-    for (let i = 0; i < specs.length; i++) {
-      const s = specs[i];
-      d.position.set(s.x, s.y, s.z);
-      d.scale.setScalar(s.scale);
-      d.updateMatrix();
-      beaconMesh.setMatrixAt(i, d.matrix);
-      beaconMesh.setColorAt(i, c.copy(s.base));
-    }
-    beaconMesh.instanceMatrix.needsUpdate = true;
-    if (beaconMesh.instanceColor) beaconMesh.instanceColor.needsUpdate = true;
-    beaconMesh.frustumCulled = false;
-    beaconMesh.renderOrder = 2;
-    group.add(beaconMesh);
-    disposables.push(bGeo, bMat);
+    const haloMaterial = coreMaterial.clone();
+    haloMaterial.size = 20;
+    haloMaterial.opacity = 0.24;
+    const halo = new THREE.Points(geometry, haloMaterial);
+    const core = new THREE.Points(geometry, coreMaterial);
+    halo.frustumCulled = false;
+    core.frustumCulled = false;
+    halo.renderOrder = 2;
+    core.renderOrder = 3;
+    group.add(halo, core);
+    disposables.push(geometry, texture, coreMaterial, haloMaterial);
   }
 
   /* ---- blink driver ---- */
   let t = 0;
-  const tmp = new THREE.Color();
+  let colorAccumulator = 0;
   const update = (dt: number) => {
-    if (!beaconMesh) return;
+    if (!beaconColor) return;
     t += dt;
+    colorAccumulator += dt;
+    if (colorAccumulator < 1 / 30) return;
+    colorAccumulator %= 1 / 30;
+    const colors = beaconColor.array as Float32Array;
     for (let i = 0; i < specs.length; i++) {
       const s = specs[i];
-      // double-flash pattern: sharp on, quick off
+      // A slow eased pulse reads as an aviation beacon without dominating roofs.
       const cyc = (t * s.rate + s.phase) % 1.0;
-      const flash1 = cyc < 0.08 ? 1 : 0;
-      const flash2 = cyc > 0.16 && cyc < 0.22 ? 1 : 0;
-      const k = 0.02 + (flash1 + flash2) * 0.85;
-      tmp.copy(s.base).multiplyScalar(k);
-      beaconMesh.setColorAt(i, tmp);
+      const pulse = cyc < 0.18 ? Math.sin(Math.PI * cyc / 0.18) ** 2 : 0;
+      const k = 0.05 + pulse * 0.85;
+      colors[i * 3] = s.base.r * k;
+      colors[i * 3 + 1] = s.base.g * k;
+      colors[i * 3 + 2] = s.base.b * k;
     }
-    if (beaconMesh.instanceColor) beaconMesh.instanceColor.needsUpdate = true;
+    beaconColor.needsUpdate = true;
   };
 
   return {
@@ -160,15 +170,16 @@ export function buildRooftops(buildings: Building[], maxHeight: number): Rooftop
         }
         pylonMesh.instanceMatrix.needsUpdate = true;
       }
-      if (beaconMesh) {
+      if (beaconPosition) {
+        const positions = beaconPosition.array as Float32Array;
         for (let i = 0; i < specs.length; i++) {
           const s = specs[i];
-          d.position.set(s.x, s.y, s.z);
-          d.scale.setScalar(mask[s.ownerId] === 1 ? s.scale : 0);
-          d.updateMatrix();
-          beaconMesh.setMatrixAt(i, d.matrix);
+          const visible = mask[s.ownerId] === 1;
+          positions[i * 3] = s.x;
+          positions[i * 3 + 1] = visible ? s.y : -10_000;
+          positions[i * 3 + 2] = s.z;
         }
-        beaconMesh.instanceMatrix.needsUpdate = true;
+        beaconPosition.needsUpdate = true;
       }
     },
     update,

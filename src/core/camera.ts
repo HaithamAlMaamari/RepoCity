@@ -8,12 +8,22 @@ export interface FlythroughOptions {
   duration?: number;
   targetY?: number;
   targetDist?: number;
+  targetFocusY?: number;
 }
 
 export interface Flythrough {
   update(deltaTime: number): boolean;
   skip(): void;
   getOrbitTarget(): THREE.Vector3;
+}
+
+export function repositoryView(span: number, maxHeight: number, aspect = 16 / 9): Pick<FlythroughOptions, 'targetY' | 'targetDist' | 'targetFocusY'> {
+  const widthScale = Math.max(1.55, 1.6 / Math.max(0.4, aspect));
+  return {
+    targetY: Math.max(30, maxHeight * 0.9),
+    targetDist: Math.max(52, span * widthScale, maxHeight * 1.75),
+    targetFocusY: Math.max(4, maxHeight * 0.58),
+  };
 }
 
 function easeInOutCubic(t: number): number {
@@ -28,6 +38,7 @@ export function createFlythrough(
   const duration = Math.max(0.5, options?.duration ?? 5.0);
   const targetY = Math.max(0, options?.targetY ?? 60);
   const targetDist = options?.targetDist ?? 110;
+  const targetFocusY = Math.max(0, options?.targetFocusY ?? 4);
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minZ + bounds.maxZ) / 2;
   const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
@@ -37,8 +48,8 @@ export function createFlythrough(
   const p2 = new THREE.Vector3(cx + targetDist * 0.55, targetY, cz + targetDist * 0.85);
   const path = new THREE.CatmullRomCurve3([p0, p1, p2], false, 'catmullrom', 0.4);
 
-  const t0 = new THREE.Vector3(cx, 4, cz);
-  const t1 = new THREE.Vector3(cx, span * 0.05, cz);
+  const t0 = new THREE.Vector3(cx, Math.max(4, targetFocusY * 0.5), cz);
+  const t1 = new THREE.Vector3(cx, targetFocusY, cz);
   const orbitTarget = t1.clone();
   const currentTarget = t0.clone();
 

@@ -23,33 +23,6 @@ export function makeRadialGlow(size = 128): THREE.CanvasTexture {
   return t;
 }
 
-/** Comet streak: bright head on the right, long fading tail to the left. */
-export function makeStreak(w = 256, h = 32): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d')!;
-  const g = ctx.createLinearGradient(0, 0, w, 0);
-  g.addColorStop(0.0, 'rgba(255,255,255,0)');
-  g.addColorStop(0.55, 'rgba(255,255,255,0.10)');
-  g.addColorStop(0.82, 'rgba(255,255,255,0.38)');
-  g.addColorStop(0.93, 'rgba(255,255,255,0.72)');
-  g.addColorStop(1.0, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, w, h);
-  // vertical falloff
-  const v = ctx.createLinearGradient(0, 0, 0, h);
-  v.addColorStop(0, 'rgba(0,0,0,1)');
-  v.addColorStop(0.35, 'rgba(0,0,0,0)');
-  v.addColorStop(0.65, 'rgba(0,0,0,0)');
-  v.addColorStop(1, 'rgba(0,0,0,1)');
-  ctx.globalCompositeOperation = 'destination-out';
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, w, h);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
 /** Vertical band: opaque middle, transparent top/bottom. For haze cylinders. */
 export function makeVerticalBand(w = 8, h = 256, midStop = 0.25): THREE.CanvasTexture {
   const c = document.createElement('canvas');

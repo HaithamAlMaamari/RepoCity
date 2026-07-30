@@ -11,7 +11,6 @@ vi.mock('./textures', async () => {
   const THREE = await import('three');
   return {
     makeRadialGlow: () => new THREE.Texture(),
-    makeStreak: () => new THREE.Texture(),
   };
 });
 
@@ -38,8 +37,8 @@ describe('seeded scene effects', () => {
     const embersB = buildEmbers(100, random('0', 'embers'), 12);
     const trafficA = buildTraffic(STREETS, random('0', 'ground-traffic'), 12);
     const trafficB = buildTraffic(STREETS, random('0', 'ground-traffic'), 12);
-    const flyingA = buildFlyingTraffic(100, random('0', 'flying-traffic'), 12);
-    const flyingB = buildFlyingTraffic(100, random('0', 'flying-traffic'), 12);
+    const flyingA = buildFlyingTraffic(STREETS, 40, random('0', 'flying-traffic'), 12);
+    const flyingB = buildFlyingTraffic(STREETS, 40, random('0', 'flying-traffic'), 12);
 
     const starsA = skyA.group.children[1] as THREE.Points;
     const starsB = skyB.group.children[1] as THREE.Points;

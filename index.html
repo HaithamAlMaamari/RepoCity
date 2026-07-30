@@ -178,7 +178,8 @@
         gap: 6px;
       }
       button.icon svg { width: 14px; height: 14px; }
-      .mobile-menu { display: none; }
+      button.mobile-menu { display: inline-flex; }
+      body:not(.summary-open) #sidebar { display: none; }
 
       #status {
         margin-left: auto;
@@ -555,12 +556,10 @@
 
       /* Mobile */
       @media (max-width: 720px) {
-        .mobile-menu { display: inline-flex; }
-        body:not(.summary-open) #sidebar { display: none; }
         header { flex-wrap: wrap; gap: 8px; padding: 12px; }
         .input-wrap input { width: calc(100vw - 220px); min-width: 160px; }
         .presets { display: none; }
-        #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 130px; max-height: 168px; padding: 12px 14px; box-sizing: border-box; }
+        #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 185px; max-height: 168px; padding: 12px 14px; box-sizing: border-box; }
         #sidebar #repo-name { font-size: 19px; }
         #sidebar #repo-branch { margin-top: 3px; }
         #sidebar #repo-coverage { margin-bottom: 8px; }
@@ -568,10 +567,10 @@
         #sidebar .stat-val { font-size: 13px; }
         #sidebar #language-label, #sidebar #lang-bars, #sidebar .sidebar-actions { display: none; }
         body.explorer-open #sidebar { display: none; }
-        #explore-panel { top: auto; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-height: 50dvh; }
+        #explore-panel { top: auto; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; max-height: 45dvh; }
         #semantic-legend { padding: 9px 14px; }
         #semantic-legend dl { grid-template-columns: auto 1fr; font-size: 9px; }
-        #explore-body { max-height: calc(50dvh - 220px); }
+        #explore-body { max-height: calc(45dvh - 220px); }
         .tree-row { min-height: 44px; }
         #hints { display: none; }
       }
@@ -648,7 +647,7 @@
         <dl>
           <dt>building</dt><dd>one rendered file</dd>
           <dt>plot area</dt><dd>approximately proportional to file bytes</dd>
-          <dt>height</dt><dd>logarithmic bytes with deterministic variation</dd>
+          <dt>height</dt><dd>file-size rank within rendered files</dd>
           <dt>color</dt><dd>detected file language</dd>
           <dt>parcel line</dt><dd>one rendered file's allocated plot</dd>
           <dt>survey border</dt><dd>rendered top-level folder extent</dd>

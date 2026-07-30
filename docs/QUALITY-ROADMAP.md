@@ -30,6 +30,7 @@ Completed evidence:
 - Rendered-file search, language and non-overlapping size filters, deterministic sorting, breadcrumbs, canonical filter URLs, and complete masked building silhouettes are synchronized across the index, canvas, picking, and poster metadata.
 - Top-level and repository-root district isolation now composes with every rendered-file filter and remains synchronized across the index, complete building silhouettes, picking, selection, poster metadata, and canonical history state.
 - Building crowns now continue language-colored facade lighting without decorative perimeter blocks; semantic file parcels, complete-layout ground coverage, road clearance, rendered-folder survey perimeters, parcel-contained geometry, and mutually exclusive mobile panels make the city footprint legible and navigable.
+- Repository-relative skyline tiers, adaptive camera framing and traffic density, compact street-contained vehicles, restrained rooftop beacons, coalesced interaction/render work, and complete instanced-resource teardown now preserve hierarchy and return GPU buffers to baseline across repository sizes.
 
 Still required before Phase 1 exits:
 
