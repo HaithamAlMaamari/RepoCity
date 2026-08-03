@@ -1,5 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import wranglerRaw from '../wrangler.jsonc?raw';
 import worker, { parseRepositoryRequest } from './index';
+
+/*
+ * The Worker attaches the CSP and the rest of the security headers, but it
+ * only gets to do that for requests wrangler actually routes to it. With
+ * `run_worker_first: ["/api/*"]` the asset server answered HTML directly, the
+ * Worker never ran for a page load, and the headers never reached the browser
+ * -- while every test that called worker.fetch() directly still passed,
+ * because doing so bypasses asset routing entirely.
+ *
+ * So assert on the routing config itself. This is the part that broke.
+ */
+describe('deployment routing', () => {
+  it('sends every request through the Worker, not just /api/*', () => {
+    // Strip // comments; the file is JSONC.
+    const config = JSON.parse(wranglerRaw.replace(/^\s*\/\/.*$/gm, '')) as {
+      assets: { run_worker_first?: boolean | string[] };
+    };
+
+    expect(config.assets.run_worker_first).toBe(true);
+  });
+});
 
 afterEach(() => {
   vi.useRealTimers();

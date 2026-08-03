@@ -8,7 +8,12 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // Every request, not just /api/*. With the previous ["/api/*"] the asset
+    // server answered HTML and bundles directly and the Worker never ran for
+    // them, so the security headers it attaches -- including the CSP -- never
+    // reached the page they exist to protect. The Worker now wraps asset
+    // responses too, which keeps one definition of those headers.
+    "run_worker_first": true
   },
   "ratelimits": [
     {
