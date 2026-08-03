@@ -1,0 +1,77 @@
+name: Bug report
+description: Something renders wrong, fails to load, or behaves unexpectedly.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security vulnerabilities please use
+        [private vulnerability reporting](https://github.com/HaithamAlMaamari/RepoCity/security/advisories/new)
+        instead of a public issue.
+
+  - type: input
+    id: share-url
+    attributes:
+      label: Share URL
+      description: >
+        The full URL from the address bar. It pins the commit and seed, so it
+        reproduces the exact city you were looking at — this is by far the most
+        useful thing you can give us.
+      placeholder: https://.../#repo=facebook/react&commit=...&seed=0
+    validations:
+      required: false
+
+  - type: input
+    id: repository
+    attributes:
+      label: Repository
+      description: Which repository were you viewing?
+      placeholder: owner/repo
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: >
+        Drag an image in. For anything visual this is worth a thousand words —
+        the in-app "capture poster" button produces a good one.
+    validations:
+      required: false
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: Chrome 141 on Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: >
+        Visit `chrome://gpu` (or the equivalent) and paste the renderer string.
+        Most rendering bugs turn out to be driver-specific.
+      placeholder: ANGLE (NVIDIA GeForce RTX 4070, D3D11)
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors
+      description: Anything red in the browser console.
+      render: text
+    validations:
+      required: false

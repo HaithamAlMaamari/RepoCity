@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest something RepoCity should do.
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        [`docs/ROADMAP.md`](https://github.com/HaithamAlMaamari/RepoCity/blob/main/docs/ROADMAP.md)
+        lists what is already planned and where it sits in priority — worth a
+        look first, in case your idea is already there.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: >
+        Describe the situation where RepoCity falls short today, rather than
+        jumping straight to a solution. It usually leads somewhere better.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: determinism
+    attributes:
+      label: Determinism
+      description: >
+        The same repository at the same commit with the same seed always
+        produces an identical city, and shared URLs depend on that.
+      options:
+        - label: I've considered whether this could make the same input render differently.
+          required: false
