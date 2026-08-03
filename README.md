@@ -1,16 +1,22 @@
 # RepoCity
 
-RepoCity turns a public GitHub repository into an explorable Three.js city. Files become buildings, directories become districts, and language data shapes the visual identity.
+[![Quality](https://github.com/HaithamAlMaamari/RepoCity/actions/workflows/quality.yml/badge.svg)](https://github.com/HaithamAlMaamari/RepoCity/actions/workflows/quality.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The project is currently moving from a polished prototype toward a production-quality repository visualization product. The measurable release plan is maintained in [`docs/QUALITY-ROADMAP.md`](docs/QUALITY-ROADMAP.md).
+**Explore any public GitHub repository as an interactive 3D city.** Files become buildings, directories become districts, and each language lights its own skyline.
 
-## Requirements
+![RepoCity rendering a repository as a neon 3D city](docs/media/hero.png)
 
-- Node.js 22.13 or newer in the 22.x release line
-- npm 10.9.2
-- A browser with WebGL2 support
+## Features
 
-## Development
+- **Repo → city, deterministically.** The same repository at the same commit with the same seed always produces the same city — buildings, streets, traffic, stars, and all. Share the URL and everyone sees the identical scene.
+- **Districts follow your directory tree.** A treemap layout carves the map into districts per top-level directory; building height tracks file size and facade colors track language.
+- **A living city.** Street networks, ground and flying traffic, rooftop details, billboards, atmosphere, and particle effects — all procedurally generated from repository data.
+- **Explore mode.** A keyboard-accessible file explorer synced to the 3D scene: select a building to inspect the file, or walk the tree to fly to its building.
+- **Poster capture.** Export a 1920×1080 poster of any city for sharing.
+- **Privacy-respecting backend.** A Cloudflare Worker proxies the GitHub API with strict validation, streamed response-size caps, rate limiting keyed by pseudonymous hashes, and no client-side tokens — ever.
+
+## Quick Start
 
 ```sh
 npm install
@@ -18,42 +24,61 @@ npm run worker:types
 npm run dev
 ```
 
-The development command builds the current static assets, starts the Worker API on `http://127.0.0.1:8787`, and starts Vite on `http://127.0.0.1:5173`. Vite proxies `/api` to the local Worker.
+This builds the static assets, starts the Worker API on `http://127.0.0.1:8787`, and starts Vite on `http://127.0.0.1:5173` (Vite proxies `/api` to the local Worker). Open the Vite URL and enter any `owner/repo`.
 
-The Worker can use GitHub anonymously for small development requests. For realistic large-repository testing, create an ignored `.dev.vars` from `.dev.vars.example` and set a fine-grained public-contents token. The token is available only to the local Worker and must never use a `VITE_*` name.
+**Requirements:** Node.js 22.13+ (22.x line), npm 10+, a WebGL2-capable browser.
+
+The Worker works anonymously against GitHub for small repositories. For large-repository testing, copy `.dev.vars.example` to `.dev.vars` and set a fine-grained, public-contents-only GitHub token. The token is read only by the local Worker and must never appear in a `VITE_*` variable or any browser bundle.
+
+## How It Works
+
+```
+Browser (Vite + Three.js)          Cloudflare Worker              GitHub API
+┌─────────────────────────┐        ┌───────────────────┐        ┌───────────┐
+│ src/data   validate +   │  /api  │ worker/  validate,│  REST  │ repos,    │
+│            model repo   ├───────►│ traverse, sample, ├───────►│ trees,    │
+│ src/city   treemap +    │        │ cache, rate-limit │        │ languages │
+│            buildings    │        └───────────────────┘        └───────────┘
+│ src/effects streets,    │
+│            traffic, sky │        Deterministic per (repo, commit, seed)
+│ src/explore file tree   │
+└─────────────────────────┘
+```
+
+- Every GitHub response is treated as untrusted and runs through hand-written validators on **both** sides of the trust boundary (`worker/github.ts`, `src/data/github-contract.ts`).
+- Successful results contain a proven-complete tree and declare whether files were sampled for rendering.
+- Canonical share URLs pin the immutable commit SHA plus a presentation seed, so procedural effects reproduce exactly.
+
+The architecture decision record lives in [`docs/architecture/ADR-001-github-data-service.md`](docs/architecture/ADR-001-github-data-service.md); the security analysis in [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md).
+
+## Project Structure
+
+- `src/data` — GitHub ingestion, contract validation, and repository modeling
+- `src/city` — treemap layout, districts, buildings, palettes, and architecture details
+- `src/effects` — streets, ground and flying traffic, billboards, atmosphere, sky, and particles
+- `src/explore` — the file-explorer model backing Explore mode
+- `src/core` — camera, seeded randomness, and URL state
+- `worker` — Cloudflare Worker: GitHub validation, traversal, sampling, caching, rate limiting
+- `docs` — architecture decisions and the security threat model
 
 ## Quality Checks
 
 ```sh
-npm run typecheck
-npm test
-npm run build
-npm run audit
-npm run check
-npm run ci
-npm run deploy:check
+npm run typecheck   # strict TS, app + worker targets
+npm test            # unit tests + isolated Workerd runtime suite
+npm run build       # typecheck + production build
+npm run ci          # the full release gate CI runs
 ```
 
-`npm run ci` reproduces the GitHub Actions release gate: tests, both TypeScript targets, production build, high-severity dependency audit, and Cloudflare deployment dry run. CI also rejects checks that modify tracked files.
+`npm run ci` reproduces the GitHub Actions gate: tests, both TypeScript targets, production build, high-severity dependency audit, and a Cloudflare deployment dry run. The Workerd suite validates real Worker bindings, request signals, streamed body limits, and Cache API behavior without production credentials or external network access.
 
-`npm test` runs fast Node unit tests plus an isolated Workerd suite that validates Worker bindings, request signals, streamed body limits, and immutable Cache API behavior without production credentials or external network access.
+## Security
 
-Browser-audit tooling is project-scoped and restricted to isolated profiles and an explicit network allowlist. Restart OpenCode after changing `opencode.jsonc` or files under `.opencode/`.
+- The browser only ever calls the same-origin RepoCity API; GitHub credentials remain Worker secrets.
+- Private repositories are rejected even when the Worker credential could read them.
+- Repository names, paths, API responses, and URL state are all treated as untrusted input.
 
-## Data And Security
-
-- RepoCity targets public repositories and rejects private repositories even if the Worker credential can read them.
-- Never put a GitHub token in a `VITE_*` environment variable or any browser bundle.
-- The browser calls only the same-origin RepoCity API; GitHub credentials remain Worker secrets.
-- Successful repository results contain a proven complete tree and identify whether files were sampled for rendering.
-- Canonical share URLs pin the immutable commit and a presentation `seed`; the same pair reproduces procedural stars, traffic, and particles.
-- The presentation seed is separate from the Worker-controlled sampling seed and accepts 1-64 letters, numbers, underscores, or hyphens.
-- GitHub's recursive tree API can truncate responses above 100,000 entries or 7 MB.
-- Treat repository names, paths, API responses, and URL state as untrusted data.
-
-The formal security and abuse analysis is documented in [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md).
-
-Production uses Cloudflare Workers Static Assets plus the same-origin ingestion Worker. Configure the optional encrypted production credential with `npx wrangler secret put GITHUB_TOKEN`; never put it in `wrangler.jsonc`.
+See [`SECURITY.md`](SECURITY.md) for the reporting policy and [`docs/security/THREAT-MODEL.md`](docs/security/THREAT-MODEL.md) for the full analysis.
 
 ## Deployment
 
@@ -62,20 +87,8 @@ npm run deploy:check
 npm run deploy
 ```
 
-Complete traversal of very large repositories requires a Workers Paid plan because the Free plan's CPU and subrequest limits are not sufficient for the bounded fallback traversal. The architecture decision is recorded in [`docs/architecture/ADR-001-github-data-service.md`](docs/architecture/ADR-001-github-data-service.md).
+Production uses Cloudflare Workers Static Assets plus the same-origin ingestion Worker. Set the optional GitHub credential with `npx wrangler secret put GITHUB_TOKEN` — never in `wrangler.jsonc`. Complete traversal of very large repositories requires a Workers Paid plan; the Free plan's CPU and subrequest limits are not sufficient for the bounded fallback traversal.
 
-Wrangler configures mandatory actor and global ingestion rate limiters at 3 and 10 requests per minute per Cloudflare location. Before production deployment, confirm namespace IDs `10001` and `10002` are unused elsewhere in the account, then validate limiter thresholds, WAF/DDoS rules, alerting, cache behavior, and log retention on the custom domain.
+## License
 
-## Project Structure
-
-- `src/data` - GitHub ingestion and repository modeling
-- `worker` - Cloudflare API, GitHub validation, traversal, sampling, and caching
-- `src/city` - treemap layout, buildings, districts, and architecture
-- `src/effects` - atmosphere, roads, traffic, labels, and particles
-- `src/core` - camera behavior
-- `docs` - quality and architecture decisions
-- `.opencode` - project-specific engineering and audit skills
-
-## Release Status
-
-RepoCity is pre-release. Visual quality is ahead of accessibility, data-completeness, testing, and operational maturity; those gaps are release blockers rather than hidden limitations.
+[MIT](LICENSE) © Haitham Al Maamari
