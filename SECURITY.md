@@ -6,7 +6,7 @@ RepoCity is pre-release and does not yet have a supported production version.
 
 ## Reporting
 
-Do not publish suspected secrets or exploitable details in a public issue. Report them privately to the project owner until a dedicated security contact is published.
+Do not publish suspected secrets or exploitable details in a public issue. Report vulnerabilities privately through [GitHub's private vulnerability reporting](https://github.com/HaithamAlMaamari/RepoCity/security/advisories/new) for this repository.
 
 ## Security Boundaries
 
