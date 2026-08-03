@@ -3,13 +3,19 @@
  *
  * The primary building mesh stays instanced and shader-driven. These
  * secondary masses create the readable silhouettes that a plain box cannot:
- * podiums, setbacks, crowns, and spires. Each layer is batched into one
- * InstancedMesh, so the detail costs a handful of draw calls rather than one
- * object per building.
+ * podiums, setbacks, crowns, spires — and, for non-source bulk, the flat
+ * depot cap. Each layer is batched into one InstancedMesh, so the detail
+ * costs a handful of draw calls rather than one object per building.
+ *
+ * The crown material's window grid is NOT a second copy of the building
+ * shader: both include FACADE_GLSL from facade-shader.ts, which owns the
+ * cell sizes, the smoothstep pairs, the hash weights and the distance
+ * response. Changing a constant there changes both surfaces at once.
  */
 
 import * as THREE from 'three';
 import type { Building } from './city';
+import { FACADE_GLSL, fogFragmentGLSL } from './facade-shader';
 
 export interface ArchitectureDetails {
   group: THREE.Group;
@@ -28,6 +34,16 @@ interface InstanceSpec {
   sx: number;
   sy: number;
   sz: number;
+}
+
+/**
+ * Horizontal footprint of the OWNING building, in world units. Detail pieces
+ * are keyed to their tower's on-screen size rather than their own: a spire is
+ * always a couple of pixels wide, so gating it on its own width would light
+ * it up in a close-up. See facade-shader.ts.
+ */
+function ownerSpan(building: Building): number {
+  return Math.min(building.scale[0], building.scale[2]);
 }
 
 interface StripSpec extends InstanceSpec {
@@ -76,6 +92,12 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
       crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
       addStrips(strips, b, ownerId, baseY + total * 0.885, w * 0.44, d * 0.44);
       spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
+    } else if (b.profile === 'depot') {
+      // Non-source bulk: a loading apron, a heavy parapet, and a bright
+      // roof edge. No crown, no spire — nothing that reads as a landmark.
+      podiums.push({ ownerId, x: b.position[0], y: baseY + 0.12, z: b.position[2], sx: w * 1.06, sy: 0.24, sz: d * 1.06 });
+      ledges.push({ ownerId, x: b.position[0], y: baseY + total * 0.94, z: b.position[2], sx: w * 1.06, sy: total * 0.12, sz: d * 1.06 });
+      addStrips(strips, b, ownerId, baseY + total, w * 1.02, d * 1.02, 1.0);
     }
   }
 
@@ -91,6 +113,7 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
     emissive: 0x020814,
     emissiveIntensity: 0.35,
   });
+  applyMassShading(bodyMaterial, 'repocity-mass-body-v2', [0.030, 0.048, 0.078]);
   const crownUniforms: CrownUniforms = {
     time: { value: 0 },
     hover: { value: -1 },
@@ -104,11 +127,12 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
     emissive: 0x031022,
     emissiveIntensity: 0.3,
   });
+  applyMassShading(spireMaterial, 'repocity-mass-spire-v2', [0.028, 0.046, 0.080]);
 
-  addBoxes(group, podiums, bodyMaterial, disposables, maskUpdaters);
-  addBoxes(group, ledges, bodyMaterial, disposables, maskUpdaters);
+  addBoxes(group, podiums, buildings, bodyMaterial, disposables, maskUpdaters);
+  addBoxes(group, ledges, buildings, bodyMaterial, disposables, maskUpdaters);
   addCrownBoxes(group, crowns, buildings, upperMaterial, disposables, maskUpdaters);
-  addSpires(group, spires, spireMaterial, disposables, maskUpdaters);
+  addSpires(group, spires, buildings, spireMaterial, disposables, maskUpdaters);
   addStripsMesh(group, strips, disposables, maskUpdaters);
 
   return {
@@ -126,12 +150,14 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
 function addBoxes(
   group: THREE.Group,
   specs: InstanceSpec[],
+  buildings: Building[],
   material: THREE.MeshStandardMaterial,
   disposables: { dispose(): void }[],
   maskUpdaters: ((mask: Uint8Array) => void)[],
 ): void {
   if (specs.length === 0) return;
   const geometry = new THREE.BoxGeometry(1, 1, 1);
+  attachOwnerSpans(geometry, specs, buildings);
   const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
   const dummy = new THREE.Object3D();
   for (let i = 0; i < specs.length; i++) {
@@ -162,6 +188,7 @@ function addCrownBoxes(
   if (specs.length === 0) return;
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const ownerIds = new Float32Array(specs.length);
+  const spans = new Float32Array(specs.length);
   const colors = new Float32Array(specs.length * 3);
   const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
   const dummy = new THREE.Object3D();
@@ -169,6 +196,7 @@ function addCrownBoxes(
     const spec = specs[i];
     const color = buildings[spec.ownerId].color;
     ownerIds[i] = spec.ownerId;
+    spans[i] = ownerSpan(buildings[spec.ownerId]);
     colors[i * 3] = color[0];
     colors[i * 3 + 1] = color[1];
     colors[i * 3 + 2] = color[2];
@@ -178,6 +206,7 @@ function addCrownBoxes(
     mesh.setMatrixAt(i, dummy.matrix);
   }
   geometry.setAttribute('aOwnerId', new THREE.InstancedBufferAttribute(ownerIds, 1));
+  geometry.setAttribute('aCrownSpan', new THREE.InstancedBufferAttribute(spans, 1));
   geometry.setAttribute('aCrownColor', new THREE.InstancedBufferAttribute(colors, 3));
   mesh.instanceMatrix.needsUpdate = true;
   mesh.frustumCulled = false;
@@ -185,6 +214,52 @@ function addCrownBoxes(
   disposables.push(mesh, geometry);
   if (!disposables.includes(material)) disposables.push(material);
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
+}
+
+/**
+ * Structural masses (podiums, ledges, depot caps, spires) carry no windows,
+ * so at overview distance they were the black holes between lit facades:
+ * an unlit dark blue that the scene fog then took the rest of the way to
+ * black. This gives them the same treatment the facades get — a distance-
+ * gated silhouette lift and the capped fog — and nothing else, so the
+ * near-camera look is byte-identical (rcFarFactor is 0 up close).
+ */
+function applyMassShading(
+  material: THREE.MeshStandardMaterial,
+  cacheKey: string,
+  lift: readonly [number, number, number],
+): void {
+  const liftGlsl = `vec3( ${lift[0]}, ${lift[1]}, ${lift[2]} )`;
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aOwnerSpan;\nvarying float vMassSpan;\nvarying vec3 vMassWorld;')
+      .replace('#include <fog_vertex>', `
+        vMassSpan = aOwnerSpan;
+        vMassWorld = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;
+        #include <fog_vertex>`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vMassSpan;
+        varying vec3 vMassWorld;
+        float rcMassAssist = 0.0;
+${FACADE_GLSL}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        rcMassAssist = rcAssist( vMassWorld, vMassSpan );
+        totalEmissiveRadiance += ${liftGlsl} * rcMassAssist;`)
+      .replace('#include <fog_fragment>', fogFragmentGLSL('vMassWorld', 'rcMassAssist', '0.3'));
+  };
+  material.customProgramCacheKey = () => cacheKey;
+}
+
+/** Per-instance owning-building footprint, for `rcAssist` in the shader. */
+function attachOwnerSpans(
+  geometry: THREE.BufferGeometry,
+  specs: readonly InstanceSpec[],
+  buildings: readonly Building[],
+): void {
+  const spans = new Float32Array(specs.length);
+  for (let i = 0; i < specs.length; i++) spans[i] = ownerSpan(buildings[specs[i].ownerId]);
+  geometry.setAttribute('aOwnerSpan', new THREE.InstancedBufferAttribute(spans, 1));
 }
 
 function buildCrownMaterial(uniforms: CrownUniforms): THREE.MeshStandardMaterial {
@@ -202,14 +277,17 @@ function buildCrownMaterial(uniforms: CrownUniforms): THREE.MeshStandardMaterial
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float aOwnerId;
+        attribute float aCrownSpan;
         attribute vec3 aCrownColor;
         varying float vOwnerId;
+        varying float vCrownSpan;
         varying vec3 vCrownColor;
         varying vec3 vCrownWorld;
         varying vec3 vCrownLocal;
         varying vec3 vCrownNormal;`)
       .replace('#include <fog_vertex>', `
         vOwnerId = aOwnerId;
+        vCrownSpan = aCrownSpan;
         vCrownColor = aCrownColor;
         vCrownLocal = position;
         vCrownWorld = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
@@ -218,6 +296,7 @@ function buildCrownMaterial(uniforms: CrownUniforms): THREE.MeshStandardMaterial
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying float vOwnerId;
+        varying float vCrownSpan;
         varying vec3 vCrownColor;
         varying vec3 vCrownWorld;
         varying vec3 vCrownLocal;
@@ -225,33 +304,39 @@ function buildCrownMaterial(uniforms: CrownUniforms): THREE.MeshStandardMaterial
         uniform float uCrownTime;
         uniform float uCrownHover;
         uniform float uCrownSelected;
-        float crownHash(float n) { return fract(sin(n) * 43758.5453); }`)
+        float rcCrownGlowKey = 0.0;
+        float rcCrownAssistKey = 0.0;
+${FACADE_GLSL}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         {
+          float assist = rcAssist(vCrownWorld, vCrownSpan);
           vec3 crownN = normalize(vCrownNormal);
           float sideMask = 1.0 - step(0.5, abs(crownN.y));
-          float horizontal = mix(vCrownWorld.x, vCrownWorld.z, abs(crownN.x));
-          float yCell = floor(vCrownWorld.y / 0.55);
-          float yFrac = fract(vCrownWorld.y / 0.55);
-          float hCell = floor(horizontal / 0.66);
-          float hFrac = fract(horizontal / 0.66);
-          float yShape = smoothstep(0.16, 0.30, yFrac) * (1.0 - smoothstep(0.60, 0.76, yFrac));
-          float hShape = smoothstep(0.16, 0.30, hFrac) * (1.0 - smoothstep(0.68, 0.82, hFrac));
-          float lit = step(0.44, crownHash(yCell * 7.31 + hCell * 11.13 + vOwnerId * 0.37));
-          float windows = yShape * hShape * sideMask * lit;
-          float rim = smoothstep(0.435, 0.5, vCrownLocal.y) * sideMask;
+          float yCell;
+          float seed;
+          float windows = rcWindowGrid(vCrownWorld, crownN, vOwnerId * 0.37, 0.0, assist, yCell, seed) * sideMask;
+          float rim = rcEdgeBand(vCrownLocal.y, 0.435, 0.5, 1.1, assist) * sideMask;
           float activeBoost = step(abs(vOwnerId - uCrownHover), 0.5) * 0.25 + step(abs(vOwnerId - uCrownSelected), 0.5) * 0.55;
           float pulse = 0.92 + sin(uCrownTime * 4.0 + vOwnerId * 0.23) * 0.08;
-          totalEmissiveRadiance += vCrownColor * (windows * 1.9 + rim * 0.7) * (1.0 + activeBoost) * pulse;
-        }`);
+          /* Crowns sit at the top of the silhouette, so they carry most of a
+             distant skyline: same energy-conserving gain as the cores. */
+          float facade = assist * (sideMask * 0.10 + smoothstep(0.5, 0.8, crownN.y) * 0.08);
+          vec3 glow = vCrownColor * (windows * 1.9 * rcDistantGain(assist) + rim * 0.7 * rcDistantEdgeGain(assist) + facade)
+            * (1.0 + activeBoost) * pulse;
+          totalEmissiveRadiance += glow;
+          rcCrownGlowKey = clamp(dot(glow, vec3(0.45)), 0.0, 1.0);
+          rcCrownAssistKey = assist;
+        }`)
+      .replace('#include <fog_fragment>', fogFragmentGLSL('vCrownWorld', 'rcCrownAssistKey', 'rcCrownGlowKey'));
   };
-  material.customProgramCacheKey = () => 'repocity-crowns-v1';
+  material.customProgramCacheKey = () => 'repocity-crowns-v3';
   return material;
 }
 
 function addSpires(
   group: THREE.Group,
   specs: InstanceSpec[],
+  buildings: Building[],
   material: THREE.MeshStandardMaterial,
   disposables: { dispose(): void }[],
   maskUpdaters: ((mask: Uint8Array) => void)[],
@@ -259,6 +344,7 @@ function addSpires(
   if (specs.length === 0) return;
   const geometry = new THREE.CylinderGeometry(0.5, 0.9, 1, 6);
   geometry.translate(0, 0.5, 0);
+  attachOwnerSpans(geometry, specs, buildings);
   const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
   const dummy = new THREE.Object3D();
   for (let i = 0; i < specs.length; i++) {
@@ -283,8 +369,9 @@ function addStrips(
   y: number,
   width: number,
   depth: number,
+  intensity = 0.78,
 ): void {
-  const color: [number, number, number] = [b.color[0] * 0.78, b.color[1] * 0.78, b.color[2] * 0.78];
+  const color: [number, number, number] = [b.color[0] * intensity, b.color[1] * intensity, b.color[2] * intensity];
   const z = depth / 2 + 0.025;
   const x = width / 2 + 0.025;
   target.push(
@@ -345,10 +432,13 @@ function updateMatrices(mesh: THREE.InstancedMesh, specs: InstanceSpec[], mask: 
 }
 
 function constrainToParcel(spec: InstanceSpec, building: Building, geometryWidth: number): void {
-  // Match the primary core's 90% parcel footprint and retain enough margin
-  // for Float32 instance-matrix precision on extremely narrow parcels.
-  const parcelW = building.parcel[0] * 0.90;
-  const parcelD = building.parcel[1] * 0.90;
+  // Match the primary core's parcel footprint and retain enough margin for
+  // Float32 instance-matrix precision on extremely narrow parcels. Ordinary
+  // cores fill 90%; depots fill more, and their parapet has to be allowed
+  // to overhang the core rather than being clamped flush with it.
+  const fill = (axis: 0 | 1) => Math.min(0.99, Math.max(0.90, building.scale[axis * 2] / building.parcel[axis]));
+  const parcelW = building.parcel[0] * fill(0);
+  const parcelD = building.parcel[1] * fill(1);
   spec.sx = Math.min(spec.sx, parcelW / geometryWidth);
   spec.sz = Math.min(spec.sz, parcelD / geometryWidth);
   const worldW = spec.sx * geometryWidth;

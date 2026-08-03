@@ -3,6 +3,12 @@
  *   far ground, city glow pools, horizon haze ring,
  *   low fog bands, sweeping search beams.
  * All MeshBasicMaterial + CanvasTextures. No shaders.
+ *
+ * A distance-gated glow halo was tried here and removed: camera distance
+ * scales with repository size (every repo rests at ~2.6 city radii), so a
+ * halo cannot tell a close-up from an overview and simply washed out both.
+ * Distance readability belongs on the buildings, where the shader can
+ * measure a building's actual on-screen size — see city/facade-shader.ts.
  */
 
 import * as THREE from 'three';

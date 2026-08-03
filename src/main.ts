@@ -17,14 +17,14 @@ import { fetchRepoTree } from './data/github';
 import type { FetchResult } from './data/github';
 import { buildLayout, repositoryLandSize } from './city/layout';
 import type { LayoutCell } from './city/layout';
-import { buildCity } from './city/city';
+import { buildCity, tallestSourceBuilding } from './city/city';
 import type { CityData, Building } from './city/city';
 import { buildRooftops } from './city/rooftops';
 import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
 import { languageColor, languageDisplayName } from './city/palette';
-import { createFlythrough, repositoryView } from './core/camera';
-import type { Flythrough } from './core/camera';
+import { createCityCameraRig, measureFreeViewport } from './core/camera';
+import type { CityCameraRig, FreeViewport } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
 import type { SceneHashState } from './core/url-state';
@@ -41,6 +41,8 @@ import type {
 
 /* ═══ DOM ═══════════════════════════════════════════════ */
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
+const headerEl = document.getElementById('topbar') as HTMLElement;
+const presetChips = document.querySelectorAll<HTMLButtonElement>('.presets .chip');
 const repoInput = document.getElementById('repo') as HTMLInputElement;
 const goBtn = document.getElementById('go') as HTMLButtonElement;
 const captureBtn = document.getElementById('capture') as HTMLButtonElement;
@@ -83,6 +85,7 @@ const explorerSortEl = document.getElementById('explorer-sort') as HTMLSelectEle
 const explorerResultsEl = document.getElementById('explorer-results')!;
 const explorerBreadcrumbsEl = document.getElementById('explorer-breadcrumbs')!;
 const mobileExplorerMedia = window.matchMedia('(max-width: 720px)');
+const reducedMotionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
 let explorerUserToggled = false;
 let summaryUserToggled = false;
 syncExplorerForViewport();
@@ -105,7 +108,8 @@ let embers: Particles | null = null;
 let billboards: Billboards | null = null;
 let atmosphere: Atmosphere | null = null;
 let sky: Sky | null = null;
-let flythrough: Flythrough | null = null;
+let cityCamera: CityCameraRig | null = null;
+let framingRefreshTimer = 0;
 let activeResult: FetchResult | null = null;
 let activeLoadController: AbortController | null = null;
 let loadSequence = 0;
@@ -126,7 +130,6 @@ const pointer = new THREE.Vector2();
 const pickHits: THREE.Intersection[] = [];
 const clock = new THREE.Clock();
 let hoveredId = -1;
-let lastInteraction = 0;
 let pendingPointerX = 0;
 let pendingPointerY = 0;
 let pointerPickPending = false;
@@ -138,6 +141,8 @@ let appliedHeight = 0;
 let appliedPixelRatio = 0;
 let motionAccumulator = 0;
 let pixelRatioCheckAccumulator = 0;
+/** Last non-error status, restored when a failure notice is dismissed. */
+let lastHealthyStatus = 'ready.';
 const MAX_RENDER_PIXELS = 3840 * 2160;
 const MOTION_STEP = 1 / 120;
 
@@ -195,18 +200,19 @@ async function init(): Promise<void> {
   controls.maxDistance = 700;
   controls.maxPolarAngle = Math.PI / 2 - 0.04;
   controls.target.set(0, 5, 0);
-  const bump = () => { lastInteraction = clock.elapsedTime; };
   controls.addEventListener('start', () => {
     orbiting = true;
     pointerPickPending = false;
     updateHoveredBuilding(-1);
-    bump();
+    noteCameraInteraction();
   });
   controls.addEventListener('end', () => {
     orbiting = false;
     pointerPickPending = pointerInside;
   });
-  renderer.domElement.addEventListener('wheel', bump, { passive: true });
+  renderer.domElement.addEventListener('wheel', noteCameraInteraction, { passive: true });
+  renderer.domElement.addEventListener('pointerdown', noteCameraInteraction);
+  window.addEventListener('keydown', handleGlobalKeydown);
 
   /* post-processing */
   const renderPass = new RenderPass(scene, camera);
@@ -251,6 +257,7 @@ async function init(): Promise<void> {
   mobileExplorerMedia.addEventListener('change', syncExplorerForViewport);
   summaryToggleEl.addEventListener('click', toggleSummary);
   mobileExplorerMedia.addEventListener('change', syncSummaryForViewport);
+  mobileExplorerMedia.addEventListener('change', scheduleFramingRefresh);
   repoTreeEl.addEventListener('keydown', handleTreeKeydown);
   repoTreeEl.addEventListener('click', handleTreeClick);
   focusBuildingEl.addEventListener('click', focusSelectedBuilding);
@@ -261,6 +268,7 @@ async function init(): Promise<void> {
   explorerSizeEl.addEventListener('change', readExplorerControls);
   explorerSortEl.addEventListener('change', readExplorerControls);
   explorerBreadcrumbsEl.addEventListener('click', handleBreadcrumbClick);
+  for (const chip of presetChips) chip.addEventListener('click', () => handlePresetChip(chip));
 
   renderer.setAnimationLoop(animate);
   setStatus('ready.');
@@ -272,6 +280,13 @@ async function init(): Promise<void> {
 }
 
 /* ═══ Repo loading ══════════════════════════════════════ */
+function handlePresetChip(chip: HTMLButtonElement): void {
+  const repo = chip.dataset.repo;
+  if (!repo) return;
+  repoInput.value = repo;
+  void handleGo();
+}
+
 async function handleGo(): Promise<void> {
   const raw = repoInput.value.trim();
   if (!raw) return;
@@ -341,26 +356,6 @@ async function loadRepo(
     cityOffsetX = -cx;
     cityOffsetZ = -cz;
     const citySize = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
-    let viewMinX = Infinity, viewMaxX = -Infinity, viewMinZ = Infinity, viewMaxZ = -Infinity;
-    let visualCenterX = 0, visualCenterZ = 0, visualWeight = 0;
-    for (const building of cityData.buildings) {
-      viewMinX = Math.min(viewMinX, building.position[0] - building.scale[0] / 2);
-      viewMaxX = Math.max(viewMaxX, building.position[0] + building.scale[0] / 2);
-      viewMinZ = Math.min(viewMinZ, building.position[2] - building.scale[2] / 2);
-      viewMaxZ = Math.max(viewMaxZ, building.position[2] + building.scale[2] / 2);
-      const weight = Math.max(0.01, building.scale[0] * building.scale[2]);
-      visualCenterX += building.position[0] * weight;
-      visualCenterZ += building.position[2] * weight;
-      visualWeight += weight;
-    }
-    visualCenterX /= visualWeight;
-    visualCenterZ /= visualWeight;
-    const viewSpan = 2 * Math.max(
-      visualCenterX - viewMinX,
-      viewMaxX - visualCenterX,
-      visualCenterZ - viewMinZ,
-      viewMaxZ - visualCenterZ,
-    );
 
     const cityRoot = new THREE.Group();
     cityRoot.name = 'cityRoot';
@@ -449,21 +444,24 @@ async function loadRepo(
     cityRoot.add(billboards.group);
 
     /* ── camera + UI ── */
-    const repositoryCameraView = repositoryView(viewSpan, cityData.maxHeight, window.innerWidth / window.innerHeight);
-    controls.maxDistance = Math.max(citySize * 3, (repositoryCameraView.targetDist ?? 0) * 1.15, 250);
-    controls.target.set(0, 5, 0);
-    flythrough = createFlythrough(camera, {
-      minX: visualCenterX - viewSpan / 2 - cx,
-      maxX: visualCenterX + viewSpan / 2 - cx,
-      minZ: visualCenterZ - viewSpan / 2 - cz,
-      maxZ: visualCenterZ + viewSpan / 2 - cz,
-    }, repositoryCameraView);
+    cityCamera = createCityCameraRig({
+      camera,
+      orbitTarget: controls.target,
+      buildings: cityData.buildings,
+      offsetX: cityOffsetX,
+      offsetZ: cityOffsetZ,
+      viewport: freeViewport,
+      random: createSceneRandom(...sceneIdentity, 'camera'),
+      reducedMotion: reducedMotionMedia.matches,
+    });
+    controls.maxDistance = Math.max(citySize * 3, cityCamera.framing.distance * 1.6, 250);
+    controls.enabled = !cityCamera.entranceActive;
+    if (import.meta.env.DEV) logFraming(cityCamera);
     billboards.update(camera, appliedHeight || window.innerHeight);
     renderer.compile(scene, camera);
     composer.render(0);
     clock.getDelta();
     motionAccumulator = 0;
-    controls.enabled = false;
 
     activeResult = result;
     activeSceneSeed = sceneSeed;
@@ -477,6 +475,8 @@ async function loadRepo(
     updateHash(result, sceneSeed, requestedId === undefined ? undefined : requestedFile, resolvedHistoryMode);
     updateStats(result, cityData.buildings);
     sidebarEl.classList.add('visible');
+    /* stats reflow the sidebar; recompose once the panel has settled */
+    scheduleFramingRefresh();
     captureBtn.disabled = false;
     captureHeaderBtn.disabled = false;
     const buildingLabel = cells.length === 1 ? 'building' : 'buildings';
@@ -488,15 +488,15 @@ async function loadRepo(
     if (controller.signal.aborted || sequence !== loadSequence) return;
     console.error(err);
     const message = (err as Error)?.message ?? 'unknown error';
+    /* the typed repository stays in the input: the user decides what to fix */
     if (activeResult && cityData) {
-      repoInput.value = activeResult.repository.fullName;
       const selectedPath = cityData.buildings[selectedBuildingId]?.path;
       replaceSelectionHash(selectedPath);
-      setStatus(`Could not load ${repo}; still showing ${activeResult.repository.fullName}.`, true);
-      selectionStatusEl.textContent = message;
+      setStatus(`Could not load ${repo}; still showing ${activeResult.repository.fullName}.`, true, false, message);
     } else {
-      setStatus(message, true);
+      setStatus(`Could not load ${repo}.`, true, false, message);
     }
+    /* the status pill is itself a live region — announcing again would double up */
   } finally {
     if (sequence === loadSequence) {
       activeLoadController = null;
@@ -563,6 +563,9 @@ function teardown(): void {
   const root = scene.getObjectByName('cityRoot');
   if (root) scene.remove(root);
 
+  if (cityCamera) { cityCamera.dispose(); cityCamera = null; }
+  window.clearTimeout(framingRefreshTimer);
+
   if (cityData) { cityData.dispose(); cityData = null; }
   if (rooftops) { rooftops.dispose(); rooftops = null; }
   if (streetNet) { streetNet.dispose(); streetNet = null; }
@@ -595,28 +598,15 @@ function animate(): void {
   }
   applyPendingResize();
 
-  if (flythrough) {
-    const active = flythrough.update(dt);
-    if (!active) {
-      controls.target.copy(flythrough.getOrbitTarget());
+  if (cityCamera) {
+    /* the rig owns the camera during the entrance, and the idle showcase drift after it */
+    if (!cityCamera.entranceActive) {
       controls.enabled = true;
-      lastInteraction = clock.elapsedTime;
-      flythrough = null;
+      controls.update();
     }
+    cityCamera.update(dt);
   } else if (controls.enabled) {
     controls.update();
-    /* idle drift — slow orbit after 3s of no interaction */
-    const idle = clock.elapsedTime - lastInteraction;
-    const ramp = Math.max(0, Math.min(1, (idle - 3) / 2));
-    if (ramp > 0) {
-      const ang = dt * 0.05 * ramp;
-      const dx = camera.position.x - controls.target.x;
-      const dz = camera.position.z - controls.target.z;
-      const cos = Math.cos(ang), sin = Math.sin(ang);
-      camera.position.x = controls.target.x + dx * cos - dz * sin;
-      camera.position.z = controls.target.z + dx * sin + dz * cos;
-      camera.lookAt(controls.target);
-    }
   }
 
   if (pointerPickPending && !orbiting) {
@@ -684,7 +674,43 @@ function handleClick(e: MouseEvent): void {
   } else {
     clearSelection(true);
   }
-  lastInteraction = clock.elapsedTime;
+  noteCameraInteraction();
+}
+
+/* ═══ Camera interaction ════════════════════════════════ */
+function noteCameraInteraction(): void {
+  cityCamera?.noteInteraction();
+}
+
+function handleGlobalKeydown(event: KeyboardEvent): void {
+  const tag = (event.target as HTMLElement | null)?.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  noteCameraInteraction();
+}
+
+/** The canvas region no overlay panel covers, measured live so toggles reframe. */
+function freeViewport(): FreeViewport {
+  return measureFreeViewport(canvas, [headerEl, sidebarEl, explorerPanelEl]);
+}
+
+/** Dev-only composition trace: what was measured, and where the city landed. */
+function logFraming(rig: CityCameraRig): void {
+  const view = freeViewport();
+  const span = (start: number, size: number) => `${Math.round(start)}..${Math.round(start + size)}`;
+  console.debug('[framing]', {
+    canvas: `${Math.round(view.canvasWidth)}×${Math.round(view.canvasHeight)}`,
+    freeX: span(view.left, view.width),
+    freeY: span(view.top, view.height),
+    cityX: span(rig.framing.screen.left, rig.framing.screen.width),
+    cityY: span(rig.framing.screen.top, rig.framing.screen.height),
+    distance: Math.round(rig.framing.distance),
+  });
+}
+
+/** Re-solve the framing once panel open/close transitions have settled. */
+function scheduleFramingRefresh(): void {
+  window.clearTimeout(framingRefreshTimer);
+  framingRefreshTimer = window.setTimeout(() => cityCamera?.refresh(), 450);
 }
 
 function setHovered(id: number): void { hoveredId = id; cityData?.setHovered(id); }
@@ -740,6 +766,7 @@ function toggleExplorer(): void {
   explorerToggleEl.setAttribute('aria-expanded', String(open));
   document.body.classList.toggle('explorer-open', open);
   if (open && mobileExplorerMedia.matches) setSummaryOpen(false);
+  scheduleFramingRefresh();
 }
 
 function syncExplorerForViewport(): void {
@@ -760,6 +787,7 @@ function toggleSummary(): void {
     explorerToggleEl.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('explorer-open');
   }
+  scheduleFramingRefresh();
 }
 
 function setSummaryOpen(open: boolean): void {
@@ -1035,8 +1063,8 @@ function replaceSelectionHash(path: string | undefined): void {
 function focusSelectedBuilding(): void {
   const building = cityData?.buildings[selectedBuildingId];
   if (!building) return;
-  flythrough?.skip();
-  flythrough = null;
+  cityCamera?.skipEntrance();
+  noteCameraInteraction();
   controls.enabled = true;
   const target = new THREE.Vector3(building.position[0] + cityOffsetX, building.totalHeight * 0.45, building.position[2] + cityOffsetZ);
   const direction = camera.position.clone().sub(controls.target).normalize();
@@ -1045,7 +1073,6 @@ function focusSelectedBuilding(): void {
   camera.position.copy(target).addScaledVector(direction.lengthSq() > 0 ? direction : new THREE.Vector3(1, 0.7, 1).normalize(), distance);
   camera.lookAt(target);
   controls.update();
-  lastInteraction = clock.elapsedTime;
 }
 
 async function copySelectedPath(): Promise<void> {
@@ -1074,10 +1101,7 @@ function updateStats(result: FetchResult, buildings: Building[]): void {
     ? `complete tree · ${result.selection.returnedFiles.toLocaleString()} selected of ${result.totals.files.toLocaleString()} files · ${buildings.length.toLocaleString()} rendered`
     : `complete tree · ${result.totals.files.toLocaleString()} files selected · ${buildings.length.toLocaleString()} rendered`;
 
-  let tallest: Building | null = null;
-  for (const b of buildings) {
-    if (!tallest || b.totalHeight > tallest.totalHeight) tallest = b;
-  }
+  const tallest: Building | null = tallestSourceBuilding(buildings);
   statFilesEl.textContent = result.totals.files.toLocaleString();
   statSizeEl.textContent = formatSize(result.totals.bytes);
   statDirsEl.textContent = result.totals.directories.toLocaleString();
@@ -1218,6 +1242,7 @@ function applyPendingResize(): void {
   appliedHeight = h;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  cityCamera?.refresh();
 }
 
 function calculatePixelRatio(width: number, height: number): number {
@@ -1226,10 +1251,40 @@ function calculatePixelRatio(width: number, height: number): number {
   return Math.max(0.5, Math.min(preferred, pixelCap));
 }
 
-function setStatus(msg: string, isErr = false, pulse = false): void {
-  statusEl.textContent = msg;
+/**
+ * Render the status pill.  Failures expand the pill so the whole reason is
+ * readable, and offer a dismiss control that restores the last healthy status.
+ */
+function setStatus(msg: string, isErr = false, pulse = false, detail?: string): void {
+  const text = document.createElement('span');
+  text.className = 'status-text';
+  text.textContent = msg;
+  const children: Node[] = [text];
+  if (detail) {
+    const detailEl = document.createElement('span');
+    detailEl.className = 'status-detail';
+    detailEl.textContent = detail;
+    text.appendChild(detailEl);
+  }
+  if (isErr) {
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'status-dismiss';
+    dismiss.title = 'Dismiss';
+    dismiss.setAttribute('aria-label', 'Dismiss this status message');
+    dismiss.textContent = '×';
+    dismiss.addEventListener('click', dismissStatus);
+    children.push(dismiss);
+  }
+  statusEl.replaceChildren(...children);
   statusEl.classList.toggle('err', isErr);
   statusEl.classList.toggle('pulse', pulse && !isErr);
+  statusEl.classList.toggle('expanded', isErr || detail !== undefined);
+  if (!isErr) lastHealthyStatus = msg;
+}
+
+function dismissStatus(): void {
+  setStatus(lastHealthyStatus);
 }
 
 function formatSize(bytes: number): string {
