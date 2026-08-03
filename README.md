@@ -16,6 +16,17 @@
 - **Poster capture.** Export a 1920×1080 poster of any city for sharing.
 - **Privacy-respecting backend.** A Cloudflare Worker proxies the GitHub API with strict validation, streamed response-size caps, rate limiting keyed by pseudonymous hashes, and no client-side tokens — ever.
 
+## Gallery
+
+Every city is generated purely from repository data, so a repository's language mix becomes its skyline's colour. Nothing here is hand-tuned per repo.
+
+| | |
+|---|---|
+| **[facebook/react](https://github.com/facebook/react)** — JavaScript amber and Rust magenta, with the compiler's `build_hir.rs` as the tallest source file | **[vuejs/vue](https://github.com/vuejs/vue)** — almost entirely TypeScript, so the city reads cyan end to end |
+| ![The React repository as a 3D city](docs/media/react.jpg) | ![The Vue repository as a 3D city](docs/media/vue.jpg) |
+| **[pallets/flask](https://github.com/pallets/flask)** — Python magenta, a small dense downtown with room to breathe | **Try your own** — type any `owner/repo`, then share the URL |
+| ![The Flask repository as a 3D city](docs/media/flask.jpg) | The share URL pins the commit SHA and the presentation seed, so whoever opens it sees the identical city — same buildings, same traffic, same stars. |
+
 ## Quick Start
 
 ```sh
@@ -88,6 +99,10 @@ npm run deploy
 ```
 
 Production uses Cloudflare Workers Static Assets plus the same-origin ingestion Worker. Set the optional GitHub credential with `npx wrangler secret put GITHUB_TOKEN` — never in `wrangler.jsonc`. Complete traversal of very large repositories requires a Workers Paid plan; the Free plan's CPU and subrequest limits are not sufficient for the bounded fallback traversal.
+
+## Contributing
+
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the release gate, and the two rules that matter most (determinism is a feature; GitHub is untrusted input). [`docs/ROADMAP.md`](docs/ROADMAP.md) is an honest, evidence-based list of what is still weak, ordered by impact, and each item says what "done" looks like.
 
 ## License
 
