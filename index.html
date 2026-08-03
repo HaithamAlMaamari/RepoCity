@@ -729,7 +729,12 @@
             <label class="wide">sort<select id="explorer-sort"><option value="layout">city layout</option><option value="name">name</option><option value="size-desc">largest first</option><option value="size-asc">smallest first</option></select></label>
           </div>
           <div id="explorer-breadcrumbs" aria-label="Current path"></div>
-          <p id="explorer-results" role="status" aria-live="polite"></p>
+          <!--
+            Visible count only. Announcing it from here would fire on every
+            programmatic render, including page load; deliberate filter
+            changes are announced through #selection-status instead.
+          -->
+          <p id="explorer-results"></p>
           <p id="tree-help" class="sr-only">Use arrow keys to navigate, Right and Left to expand or collapse folders, and Enter or Space to select a file.</p>
           <ul id="repo-tree" role="tree" aria-label="Rendered repository files" aria-describedby="tree-help explorer-coverage"></ul>
           <p id="tree-empty" hidden>No files are rendered for this repository.</p>

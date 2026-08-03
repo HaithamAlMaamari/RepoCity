@@ -296,7 +296,7 @@ describe('cityFitBox', () => {
 });
 
 describe('computeCityFraming', () => {
-  const cities: ReadonlyArray<readonly [string, FitBuilding[]]> = [
+  const cities: readonly (readonly [string, FitBuilding[]])[] = [
     ['13 files', makeCity(13, 34)],
     ['236 files', makeCity(236, 170)],
     ['17,000 files', makeCity(17000, 240)],
@@ -455,7 +455,7 @@ describe('settled composition', () => {
     return makeCity(count, span, heights);
   }
 
-  const cities: ReadonlyArray<readonly [string, FitBuilding[]]> = [
+  const cities: readonly (readonly [string, FitBuilding[]])[] = [
     ['13-building', cityWithOutlier(13, 40, 72)],
     ['236-building', cityWithOutlier(236, 227, 72)],
     ['5,000-building', cityWithOutlier(5000, 240, 72)],
@@ -484,7 +484,7 @@ describe('settled composition', () => {
   }
 
   it('lets a big city run off the sides rather than float in empty ground', () => {
-    const { rig, viewport } = makeRig(cityWithOutlier(5000, 240, 72), { reducedMotion: true });
+    const { rig } = makeRig(cityWithOutlier(5000, 240, 72), { reducedMotion: true });
     expect(rig.framing.widthFill).toBeGreaterThan(1);
     expect(rig.framing.widthFill).toBeLessThanOrEqual(1.51);
   });
@@ -596,7 +596,7 @@ describe('showcase orbit framing', () => {
     return { samples, viewport };
   }
 
-  const orbits: ReadonlyArray<readonly [string, FitBuilding[]]> = [
+  const orbits: readonly (readonly [string, FitBuilding[]])[] = [
     ['1,200-building wide city', wideCity()],
     ['5,000-building wide city', hugeCity()],
   ];
@@ -679,8 +679,8 @@ describe('showcase orbit framing', () => {
     const middleBottom = viewport.top + viewport.height * 0.75;
     const step = 1 / 60;
     const seconds = (Math.PI * 2) / 0.028 + 10;
-    let previousPosition = camera.position.clone();
-    let previousAim = orbitTarget.clone();
+    const previousPosition = camera.position.clone();
+    const previousAim = orbitTarget.clone();
     let previousAngle = horizontalAngle(camera, orbitTarget);
     let swept = 0;
     let frame = 0;
@@ -746,7 +746,7 @@ describe('showcase orbit framing', () => {
     expect(camera.position.distanceTo(focused)).toBeLessThan(1e-9);
     expect(orbitTarget.distanceTo(target)).toBeLessThan(1e-9);
 
-    let previous = camera.position.clone();
+    const previous = camera.position.clone();
     for (let step = 0; step < 60 * 40; step++) {
       rig.update(1 / 60);
       expect(camera.position.distanceTo(previous)).toBeLessThan(distance * 0.02);
@@ -789,7 +789,7 @@ describe('cinematic entrance', () => {
   it('hands over to the drift at speed, without a stutter or a pop', () => {
     const { rig, camera } = makeRig(buildings);
     /* the last frame the entrance owns */
-    let previous = camera.position.clone();
+    const previous = camera.position.clone();
     let entranceStep = 0;
     while (rig.update(1 / 60)) {
       entranceStep = camera.position.distanceTo(previous);

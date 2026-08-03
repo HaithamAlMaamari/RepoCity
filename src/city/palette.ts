@@ -263,10 +263,6 @@ export function languageEmissiveBoost(language: string): number {
   return WARMTH[language.toLowerCase()] ?? 0.5;
 }
 
-export function getPalette(): Map<string, [number, number, number]> {
-  return new Map(Object.entries(PALETTE));
-}
-
 export function languageDisplayName(lang: string): string {
   const map: Record<string, string> = {
     javascript: 'JavaScript', typescript: 'TypeScript', python: 'Python',
@@ -307,15 +303,3 @@ export function languageDisplayName(lang: string): string {
   };
   return map[lang.toLowerCase()] ?? lang;
 }
-
-/**
- * Brand anchor colors, exposed so UI and effects stay in sync with
- * the palette definition.
- */
-export const BRAND = {
-  magenta: [1.00, 0.18, 0.54] as [number, number, number],    // #ff2d8a
-  cyan:    [0.00, 0.83, 1.00] as [number, number, number],    // #00d4ff
-  amber:   [1.00, 0.70, 0.28] as [number, number, number],    // #ffb347
-  bgDeep:  [0.020, 0.028, 0.045] as [number, number, number], // near-black teal
-  bgSoft:  [0.040, 0.060, 0.090] as [number, number, number],
-};
