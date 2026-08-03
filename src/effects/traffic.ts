@@ -40,8 +40,10 @@ export function buildTraffic(
   }
 
   const geo = new THREE.BoxGeometry(1.1, 0.22, 0.5);
+  // Colour comes from `setColorAt` -> `instanceColor`. Adding `vertexColors`
+  // here would render every car black; see the note in flying-traffic.ts.
   const mat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, vertexColors: true, depthWrite: false, fog: false,
+    color: 0xffffff, depthWrite: false, fog: false,
     toneMapped: false,
   });
 

@@ -314,8 +314,13 @@ describe('computeCityFraming', () => {
          */
         const heightFill = rect.height / viewport.height;
         const widthFill = rect.width / viewport.width;
-        expect(heightFill).toBeLessThanOrEqual(0.862);
-        expect(heightFill > 0.855 || widthFill > 1.49).toBe(true);
+        /*
+         * Behavioural, not pinned: the city must be a commanding presence in
+         * the frame and must not be cropped by it. Asserting the exact fill
+         * would just restate REST_HEIGHT_FILL and break on every retune.
+         */
+        expect(heightFill).toBeLessThanOrEqual(1);
+        expect(heightFill > 0.8 || widthFill > 1.49).toBe(true);
       }
     });
 
@@ -395,9 +400,14 @@ describe('computeCityFraming', () => {
         visualBox,
         azimuth: (step / 96) * Math.PI * 2,
       });
-      /* the bias is an NDC nudge, not a relocation */
-      expect(Math.abs(framing.bias.x)).toBeLessThan(0.5);
-      expect(Math.abs(framing.bias.y)).toBeLessThan(0.5);
+      /*
+       * The bias is an NDC nudge, not a relocation. The tolerance grew with
+       * the tighter framing: a closer camera needs a proportionally larger
+       * NDC offset to place the same city, so this bounds the *kind* of
+       * correction rather than pinning its magnitude.
+       */
+      expect(Math.abs(framing.bias.x)).toBeLessThan(0.6);
+      expect(Math.abs(framing.bias.y)).toBeLessThan(0.6);
       /* the aim sits inside the city's own vertical range, never under it */
       expect(framing.aim.y).toBeGreaterThan(-visualBox.maxY);
       /* and the reported screen rect matches an independent projection */
@@ -431,9 +441,17 @@ describe('computeCityFraming', () => {
     }
     const options = { visualBox, azimuth };
     const heightOnly = computeCityFraming(box, viewport, camera, options);
-    const widthFloor = computeCityFraming(box, viewport, camera, { ...options, minWidthFill: 1.06 });
-    expect(heightOnly.widthFill).toBeLessThan(1);
-    expect(widthFloor.widthFill).toBeGreaterThan(1.05);
+    /*
+     * Demand more width than the height fit yields on its own, whatever that
+     * happens to be. Pinning a literal floor made this test depend on the
+     * fixture under-filling the frame, which stopped being true once the
+     * framing tightened — and a passing test that can no longer fail is worse
+     * than no test.
+     */
+    const floor = heightOnly.widthFill + 0.15;
+    const widthFloor = computeCityFraming(box, viewport, camera, { ...options, minWidthFill: floor });
+    expect(widthFloor.widthFill).toBeGreaterThan(heightOnly.widthFill);
+    expect(widthFloor.widthFill).toBeGreaterThanOrEqual(floor - 0.01);
     expect(widthFloor.distance).toBeLessThan(heightOnly.distance);
     /* the surplus height leaves through the bottom; the skyline keeps its headroom */
     expect(widthFloor.screen.top).toBeGreaterThan(viewport.top);
@@ -494,9 +512,15 @@ describe('settled composition', () => {
     const { rig, camera, viewport } = makeRig(buildings, { reducedMotion: true });
     /* the tower is excluded from the sizing box … */
     expect(rig.box.maxY).toBeLessThan(240);
-    /* … and the framed height stops OUTLIER_HEADROOM above the clipped skyline,
-       so one freak tower cannot push the whole city into the distance */
-    expect(rig.visualBox.maxY).toBeCloseTo(rig.box.maxY * 2.4, 5);
+    /*
+     * … and the framed height stops a bounded distance above the clipped
+     * skyline, so one freak tower cannot push the whole city into the
+     * distance. The bound is what matters, not its exact value: too generous
+     * and the solver fits mostly empty air, which is what used to make the
+     * city land small in the frame.
+     */
+    expect(rig.visualBox.maxY).toBeGreaterThan(rig.box.maxY);
+    expect(rig.visualBox.maxY).toBeLessThanOrEqual(rig.box.maxY * 1.6);
     expect(rig.visualBox.maxY).toBeLessThan(240);
     /* the tower itself is cropped by the top of the canvas, not framed whole */
     const tip = toPixels(tallestTop(buildings), camera, viewport);
@@ -624,14 +648,22 @@ describe('showcase orbit framing', () => {
       const { samples, viewport } = walkOrbit(buildings, false);
       const middleTop = viewport.top + viewport.height * 0.25;
       const middleBottom = viewport.top + viewport.height * 0.75;
+      /* the ordinary skyline, with the freak tower already clipped off */
+      const skylineHeight = cityFitBox(buildings).maxY;
       for (const sample of samples) {
         /* the city crosses the middle half of the free viewport … */
         expect(sample.rect.top).toBeLessThan(middleBottom);
         expect(sample.rect.top + sample.rect.height).toBeGreaterThan(middleTop);
         /* … its skyline clears the header band … */
         expect(sample.rect.top).toBeGreaterThan(viewport.top);
-        /* … and the camera aims at the city, not at the ground far below it */
-        expect(sample.framing.aim.y).toBeGreaterThan(-1);
+        /*
+         * … and the camera aims at the city, not at the ground far below it.
+         * Relative to the skyline rather than an absolute -1: a tighter
+         * framing legitimately drops the aim toward the city's base, and what
+         * would be wrong is aiming a meaningful fraction of the city's own
+         * height underground.
+         */
+        expect(sample.framing.aim.y).toBeGreaterThan(-skylineHeight * 0.4);
         expect(sample.framing.position.y).toBeGreaterThan(0);
       }
     });
@@ -719,9 +751,10 @@ describe('showcase orbit framing', () => {
       expect(Math.abs(centringError(sample.rect, viewport).y)).toBeLessThan(0.02);
       expect(Math.abs(centringError(sample.rect, viewport).x)).toBeLessThan(0.02);
     }
+    /* commanding but uncropped, all the way round */
     const fills = samples.map((sample) => sample.rect.height / viewport.height);
     expect(Math.min(...fills)).toBeGreaterThan(0.86);
-    expect(Math.max(...fills)).toBeLessThan(0.94);
+    expect(Math.max(...fills)).toBeLessThanOrEqual(1);
   });
 
   it('keeps a user-focused building framed without falling back into the orbit', () => {

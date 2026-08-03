@@ -106,6 +106,30 @@ export function buildBillboards(blocks: BillboardBlock[]): Billboards {
   const corner = new THREE.Vector3();
   const layoutSigns = signs.slice();
   const cornerSigns = [-1, 1] as const;
+  const cameraQuaternion = new THREE.Quaternion();
+  const parentQuaternion = new THREE.Quaternion();
+
+  /**
+   * Turn a sign to face the camera on every axis.
+   *
+   * This used to be a yaw-only `rotation.y = atan2(...)`, which keeps signs
+   * vertical: fine from street level, but looking down on the city from above
+   * showed them all edge-on and unreadable. Copying the camera's orientation
+   * makes the quad screen-aligned from every angle, including straight down.
+   *
+   * The camera's rotation is world-space and the sign lives under the
+   * translated `cityRoot`, so undo the parent's rotation rather than assuming
+   * there is none.
+   */
+  const faceCamera = (mesh: THREE.Mesh, camera: THREE.Camera) => {
+    camera.getWorldQuaternion(cameraQuaternion);
+    if (mesh.parent) {
+      mesh.parent.getWorldQuaternion(parentQuaternion);
+      mesh.quaternion.copy(parentQuaternion.invert()).multiply(cameraQuaternion);
+    } else {
+      mesh.quaternion.copy(cameraQuaternion);
+    }
+  };
   const update = (camera: THREE.PerspectiveCamera, viewportHeight: number) => {
     const targetPixels = camera.aspect < 0.75 ? 14 : 16;
     const verticalFov = THREE.MathUtils.degToRad(camera.fov);
@@ -119,7 +143,7 @@ export function buildBillboards(blocks: BillboardBlock[]): Billboards {
       sign.mesh.position.y = sign.anchorY + worldHeight / 2;
       sign.mesh.scale.setScalar(worldHeight);
       sign.mesh.getWorldPosition(worldPosition);
-      sign.mesh.rotation.y = Math.atan2(camera.position.x - worldPosition.x, camera.position.z - worldPosition.z);
+      faceCamera(sign.mesh, camera);
       measureScreenBounds(sign, camera, viewportWidth, viewportHeight, textureAspect, corner, cornerSigns);
       if (sign.screenHeight > 0.01) {
         sign.mesh.scale.multiplyScalar(targetPixels / sign.screenHeight);
@@ -168,7 +192,7 @@ export function buildBillboards(blocks: BillboardBlock[]): Billboards {
       sign.mesh.parent?.worldToLocal(targetLocal);
       sign.mesh.position.copy(targetLocal);
       sign.mesh.getWorldPosition(worldPosition);
-      sign.mesh.rotation.y = Math.atan2(camera.position.x - worldPosition.x, camera.position.z - worldPosition.z);
+      faceCamera(sign.mesh, camera);
     }
   };
 

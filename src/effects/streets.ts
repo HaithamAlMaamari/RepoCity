@@ -233,7 +233,6 @@ export function buildStreetNetwork(
     const gMat = new THREE.MeshBasicMaterial({
       map: glowTex, transparent: true, opacity: 0.38,
       blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
-      vertexColors: true,
     });
     const gMesh = new THREE.InstancedMesh(gGeo, gMat, points.length);
     const d = new THREE.Object3D();
@@ -297,10 +296,10 @@ export function buildStreetNetwork(
   if (surveyPosts.length > 0) {
     const postGeo = new THREE.CylinderGeometry(0.22, 0.22, 3.6, 6);
     postGeo.translate(0, 1.8, 0);
-    const postMat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: true });
+    const postMat = new THREE.MeshBasicMaterial({ fog: true });
     const posts = new THREE.InstancedMesh(postGeo, postMat, surveyPosts.length);
     const beaconGeo = new THREE.SphereGeometry(0.42, 8, 6);
-    const beaconMat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+    const beaconMat = new THREE.MeshBasicMaterial({ fog: false });
     const beacons = new THREE.InstancedMesh(beaconGeo, beaconMat, surveyPosts.length);
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();

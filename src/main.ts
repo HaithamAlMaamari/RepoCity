@@ -30,7 +30,7 @@ import type { SceneHashState } from './core/url-state';
 import { buildExplorerModel, deriveExplorerView, visibleExplorerNodes } from './explore/explorer-model';
 import type { ExplorerFilterState, ExplorerModel, ExplorerNode, ExplorerView } from './explore/explorer-model';
 import {
-  buildSky, buildAtmosphere, buildStreetNetwork,
+  buildSky, NIGHT_COLOR, buildAtmosphere, buildStreetNetwork,
   buildTraffic, buildFlyingTraffic, buildEmbers, buildBillboards,
 } from './effects';
 import type {
@@ -158,7 +158,7 @@ async function init(): Promise<void> {
   renderer.setSize(window.innerWidth, window.innerHeight);
   appliedWidth = window.innerWidth;
   appliedHeight = window.innerHeight;
-  renderer.setClearColor(0x0a0818);
+  renderer.setClearColor(NIGHT_COLOR);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.88;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -169,7 +169,13 @@ async function init(): Promise<void> {
   });
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x0a0818, 0.0032);
+  /*
+   * The far ground now respects this fog (see atmosphere.ts), which is what
+   * dissolves the horizon instead of ending the world in a hard line. Density
+   * stays where it was: the facade shader's FOG_CEILING is tuned against it,
+   * and raising it dims the small-repository cities that already look best.
+   */
+  scene.fog = new THREE.FogExp2(NIGHT_COLOR, 0.0032);
 
   /* lighting — 80% dark, neon accents carry the scene */
   scene.add(new THREE.AmbientLight(0x293052, 0.36));

@@ -12,6 +12,17 @@ export interface Sky {
   dispose(): void;
 }
 
+/**
+ * The colour the night resolves to at infinite distance.
+ *
+ * One definition, used by the renderer's clear colour, the scene fog, and the
+ * dome's below-horizon band. They have to agree: the far ground fades to the
+ * fog colour, so if the dome's lower band differs the two meet in a visible
+ * horizon line — which is exactly what the city used to sit inside, with a
+ * lighter sky above a darker plain.
+ */
+export const NIGHT_COLOR = 0x0a0818;
+
 export function buildSky(random: RandomSource): Sky {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
@@ -20,6 +31,11 @@ export function buildSky(random: RandomSource): Sky {
   const domeGeo = new THREE.SphereGeometry(1800, 40, 20);
   const domeMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      // Matched to the scene fog so the fogged ground and the sky below the
+      // horizon are the same colour and no seam can appear between them.
+      uBelow: { value: new THREE.Color(NIGHT_COLOR) },
+    },
     vertexShader: /* glsl */ `
       varying float vY;
       void main() {
@@ -28,18 +44,26 @@ export function buildSky(random: RandomSource): Sky {
       }`,
     fragmentShader: /* glsl */ `
       varying float vY;
+      uniform vec3 uBelow;
       void main() {
         float t = clamp( vY * 0.5 + 0.5, 0.0, 1.0 );
-        vec3 below  = vec3( 0.008, 0.006, 0.028 );
+        vec3 below  = uBelow;
         vec3 horizon= vec3( 0.058, 0.040, 0.125 );
         vec3 zenith = vec3( 0.016, 0.010, 0.055 );
-        vec3 sky = mix( below, horizon, smoothstep( 0.32, 0.5, t ) );
-        sky = mix( sky, zenith, smoothstep( 0.54, 0.92, t ) );
-        // magenta smog band above horizon
-        float smog = smoothstep( 0.5, 0.56, t ) * ( 1.0 - smoothstep( 0.56, 0.78, t ) );
+        /*
+         * The glow band starts AT eye level (t = 0.5) and brightens upward,
+         * rather than reaching full brightness by the time it gets there.
+         * The ground fades to uBelow, so if the sky were already at its
+         * bright horizon colour where the two meet, the difference would draw
+         * exactly the hard horizon line this gradient exists to avoid.
+         */
+        vec3 sky = mix( below, horizon, smoothstep( 0.5, 0.66, t ) );
+        sky = mix( sky, zenith, smoothstep( 0.68, 0.94, t ) );
+        // magenta smog band, lifted clear of the horizon for the same reason
+        float smog = smoothstep( 0.58, 0.66, t ) * ( 1.0 - smoothstep( 0.66, 0.84, t ) );
         sky += vec3( 0.065, 0.020, 0.080 ) * smog;
-        // cyan spill right at horizon
-        float cy = smoothstep( 0.47, 0.53, t ) * ( 1.0 - smoothstep( 0.53, 0.62, t ) );
+        // cyan spill, fading in just above eye level
+        float cy = smoothstep( 0.5, 0.58, t ) * ( 1.0 - smoothstep( 0.58, 0.70, t ) );
         sky += vec3( 0.015, 0.050, 0.085 ) * cy;
         gl_FragColor = vec4( sky, 1.0 );
       }`,

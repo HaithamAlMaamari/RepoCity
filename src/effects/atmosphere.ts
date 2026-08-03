@@ -25,11 +25,24 @@ export function buildAtmosphere(citySize: number, maxBuildingHeight: number): At
   const disposables: { dispose(): void }[] = [];
   const S = Math.max(citySize, 120);
 
-  /* ---- far ground (dark disc) ---- */
-  const gndGeo = new THREE.CircleGeometry(S * 7, 48);
+  /*
+   * ---- far ground (dark disc) ----
+   *
+   * `fog: true` is load-bearing. Unfogged, this disc rendered flat 0x1a2a46
+   * all the way to its rim, which met the sky dome in a hard horizon line and
+   * surrounded every city with an obviously fake, uniformly lit plain 14-27
+   * city-spans wide — the scene fog could not touch it, and the haze ring
+   * meant to terminate it sits at S*3.4, *inside* it.
+   *
+   * Fogged, the rim sits far beyond the distance at which FogExp2 saturates,
+   * so the ground fades to exactly the fog colour and no edge exists to see.
+   * The radius stays generous for that reason: shrinking it would bring the
+   * rim back inside the fog's reach and make the edge visible again.
+   */
+  const gndGeo = new THREE.CircleGeometry(S * 6, 48);
   const gndMat = new THREE.MeshBasicMaterial({
-    color: 0x1a2a46,
-    fog: false,
+    color: 0x16243c,
+    fog: true,
   });
   const gnd = new THREE.Mesh(gndGeo, gndMat);
   gnd.rotation.x = -Math.PI / 2;

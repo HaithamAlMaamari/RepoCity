@@ -69,6 +69,26 @@ export default tseslint.config(
     rules: { 'no-control-regex': 'off' },
   },
 
+  /*
+   * Developer scripts run under Node and sit outside both tsconfig projects,
+   * so the type-aware rules cannot resolve them. Lint them syntactically
+   * rather than skipping them entirely.
+   */
+  {
+    files: ['scripts/**/*.mjs'],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      // Both: the file runs under Node, but its page.evaluate() callbacks are
+      // serialised and executed inside the browser.
+      globals: { ...globals.node, ...globals.browser },
+      parserOptions: { projectService: false, project: false },
+    },
+    rules: {
+      ...tseslint.configs.disableTypeChecked.rules,
+      'no-console': 'off',
+    },
+  },
+
   // Browser code.
   {
     files: ['src/**/*.ts'],
