@@ -6,6 +6,10 @@ playwright-report/
 blob-report/
 artifacts/
 .playwright-cli/
+.playwright/
+.opencode/
+opencode.jsonc
+finalgate-*.yml
 
 .env
 .env.*
