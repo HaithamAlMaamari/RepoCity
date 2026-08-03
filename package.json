@@ -33,6 +33,7 @@
     "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "vite",
     "dev:api": "wrangler dev --port 8787",
+    "prelint": "wrangler types",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,js,json,md,html}\"",
