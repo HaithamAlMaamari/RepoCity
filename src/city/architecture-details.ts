@@ -92,6 +92,18 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
       crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
       addStrips(strips, b, ownerId, baseY + total * 0.885, w * 0.44, d * 0.44);
       spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
+    } else if (b.profile === 'block') {
+      /*
+       * The lower 40% of the source city. It had no detail geometry at all,
+       * so the bottom of every skyline was bare boxes while the band directly
+       * above it sprouted ledges, crowns and light strips — a visible seam
+       * exactly where the profile changed. A parapet and a lit roof edge are
+       * enough to give the mass a top without competing with the landmarks,
+       * which keep the crowns and spires to themselves.
+       */
+      const y = baseY + b.scale[1];
+      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.05, sy: 0.16, sz: d * 1.05 });
+      addStrips(strips, b, ownerId, y, w, d, 0.5);
     } else if (b.profile === 'depot') {
       // Non-source bulk: a loading apron, a heavy parapet, and a bright
       // roof edge. No crown, no spire — nothing that reads as a landmark.
@@ -430,14 +442,25 @@ function updateMatrices(mesh: THREE.InstancedMesh, specs: InstanceSpec[], mask: 
   mesh.instanceMatrix.needsUpdate = true;
 }
 
+/** How far toward its plot edge a detail may reach. */
+const DETAIL_PARCEL_LIMIT = 0.99;
+
 function constrainToParcel(spec: InstanceSpec, building: Building, geometryWidth: number): void {
-  // Match the primary core's parcel footprint and retain enough margin for
-  // Float32 instance-matrix precision on extremely narrow parcels. Ordinary
-  // cores fill 90%; depots fill more, and their parapet has to be allowed
-  // to overhang the core rather than being clamped flush with it.
-  const fill = (axis: 0 | 1) => Math.min(0.99, Math.max(0.90, building.scale[axis * 2] / building.parcel[axis]));
-  const parcelW = building.parcel[0] * fill(0);
-  const parcelD = building.parcel[1] * fill(1);
+  /*
+   * Details are bounded by the PLOT, not by the core.
+   *
+   * This used to track the core's own fill ratio, which was fine while cores
+   * varied in width — but now every core fills exactly 90% of its parcel, so
+   * that rule clamped every parapet and ledge flush with the wall beneath it
+   * and the overhang that makes them read as architecture disappeared. Bounding
+   * by the plot instead lets a ledge sit proud of its core while still never
+   * crossing into the neighbouring parcel or the street.
+   *
+   * The margin below the plot edge also retains enough room for Float32
+   * instance-matrix precision on extremely narrow parcels.
+   */
+  const parcelW = building.parcel[0] * DETAIL_PARCEL_LIMIT;
+  const parcelD = building.parcel[1] * DETAIL_PARCEL_LIMIT;
   spec.sx = Math.min(spec.sx, parcelW / geometryWidth);
   spec.sz = Math.min(spec.sz, parcelD / geometryWidth);
   const worldW = spec.sx * geometryWidth;

@@ -9,17 +9,87 @@ describe('repository land sizing', () => {
     expect(repositoryLandSize(5000)).toBe(240);
   });
 
-  it('uses the requested land dimensions without changing file-area ratios', () => {
-    const root: TreeNode = {
-      name: 'root', path: '', type: 'dir', size: 4, language: undefined,
+  function twoFileRoot(smaller: number, larger: number): TreeNode {
+    return {
+      name: 'root', path: '', type: 'dir', size: smaller + larger, language: undefined,
       children: [
-        { name: 'a.ts', path: 'a.ts', type: 'file', size: 1, language: 'typescript', children: [] },
-        { name: 'b.ts', path: 'b.ts', type: 'file', size: 3, language: 'typescript', children: [] },
+        { name: 'a.ts', path: 'a.ts', type: 'file', size: smaller, language: 'typescript', children: [] },
+        { name: 'b.ts', path: 'b.ts', type: 'file', size: larger, language: 'typescript', children: [] },
       ],
     };
-    const cells = buildLayout(root, { width: 60, height: 60, padding: 0, depthScale: 0 });
+  }
+
+  /*
+   * The gutter used to be an absolute world-unit subtraction that compounded
+   * once per depth level, so any cell narrower than the accumulated gutter was
+   * silently dropped by the `> 0` guard in squarify. On react that removed
+   * roughly 3,800 of the 5,000 selected files from the city while the UI still
+   * reported them as selected. Every file that reaches the layout must get a
+   * plot.
+   */
+  it('gives every file a plot, however deep and however small', () => {
+    const leaf = (path: string, size: number): TreeNode =>
+      ({ name: path.split('/').pop()!, path, type: 'file', size, language: 'typescript', children: [] });
+
+    /* five levels deep, with a big sibling to squeeze the small ones */
+    let branch: TreeNode = {
+      name: 'l5', path: 'a/b/c/d/l5', type: 'dir', size: 0, language: undefined,
+      children: Array.from({ length: 40 }, (_, i) => leaf(`a/b/c/d/l5/f${i}.ts`, 1)),
+    };
+    for (const [depth, path] of [[4, 'a/b/c/d'], [3, 'a/b/c'], [2, 'a/b'], [1, 'a']] as const) {
+      branch = {
+        name: `l${depth}`, path, type: 'dir', size: 0, language: undefined,
+        children: [branch, leaf(`${path}/big.ts`, 400_000)],
+      };
+    }
+    const root: TreeNode = {
+      name: 'root', path: '', type: 'dir', size: 0, language: undefined, children: [branch],
+    };
+
+    const expected = 40 + 4;
+    const cells = buildLayout(root, { width: 200, height: 200, padding: 0.35, depthScale: 0.3 });
+    expect(cells).toHaveLength(expected);
+    for (const cell of cells) {
+      expect(cell.rect.w).toBeGreaterThan(0);
+      expect(cell.rect.h).toBeGreaterThan(0);
+    }
+  });
+
+  it('uses the requested land dimensions', () => {
+    const cells = buildLayout(twoFileRoot(1, 3), { width: 60, height: 60, padding: 0, depthScale: 0 });
     expect(Math.max(...cells.map((cell) => cell.rect.x + cell.rect.w))).toBeCloseTo(60);
     expect(Math.max(...cells.map((cell) => cell.rect.y + cell.rect.h))).toBeCloseTo(60);
-    expect(cells[0].rect.w * cells[0].rect.h / (cells[1].rect.w * cells[1].rect.h)).toBeCloseTo(3);
+  });
+
+  /*
+   * Plot area used to be exactly proportional to bytes, which let a single
+   * outsized file claim a plot orders of magnitude past the median and squeeze
+   * every other building into a sliver. Area is now compressed by a power
+   * transform: strictly increasing, so the ordering a reader compares two
+   * buildings by is intact, but the extremes are pulled in.
+   */
+  it('keeps plot area ordered by size while compressing the range', () => {
+    const area = (cell: { rect: { w: number; h: number } }) => cell.rect.w * cell.rect.h;
+
+    for (const [smaller, larger] of [[1, 3], [1, 100], [500, 20_000]] as const) {
+      const cells = buildLayout(twoFileRoot(smaller, larger), {
+        width: 60, height: 60, padding: 0, depthScale: 0,
+      });
+      const byPath = new Map(cells.map((cell) => [cell.node.path, cell]));
+      const ratio = area(byPath.get('b.ts')!) / area(byPath.get('a.ts')!);
+      const bytes = larger / smaller;
+
+      /* bigger file, bigger plot … */
+      expect(ratio).toBeGreaterThan(1);
+      /* … but well short of the raw byte ratio */
+      expect(ratio).toBeLessThan(bytes);
+      expect(ratio).toBeCloseTo(Math.pow(bytes, 0.55), 1);
+    }
+  });
+
+  it(`reports the file's true byte size, not its layout weight`, () => {
+    const cells = buildLayout(twoFileRoot(1, 20_000), { width: 60, height: 60, padding: 0, depthScale: 0 });
+    /* the explorer shows this, and buildCity ranks heights by it */
+    expect(cells.map((cell) => cell.node.size).sort((a, b) => a - b)).toEqual([1, 20_000]);
   });
 });

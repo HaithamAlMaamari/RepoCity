@@ -91,23 +91,61 @@ export function buildLayout(
 
   // Treat the root as the container; layout its children.
   const rect: WorkRect = { x: 0, y: 0, w: opts.width, h: opts.height };
-  const items = root.children
-    .map(normalizeSize)
-    .sort((a, b) => b.size - a.size);
+  const items = root.children.map(weigh).sort(byWeightDescending);
 
   squarify(items, rect, 0, cells, opts);
   return cells;
 }
 
 /**
- * Return a new node with size clamped to a minimum of 1 so that
- * zero-size files still occupy a tiny visible area.
+ * Most of an axis a cell may lose to its gutter.
+ *
+ * The cap is what stops the depth-scaled gutter from starving deeply nested
+ * files: a cell always keeps at least three quarters of each axis, however far
+ * down the tree it sits.
  */
-function normalizeSize(node: TreeNode): TreeNode {
-  if (node.size <= 0) {
-    return { ...node, size: 1 };
-  }
-  return node;
+const MAX_GUTTER_FRACTION = 0.25;
+
+/**
+ * A node paired with the area weight the treemap should give it.
+ *
+ * The weight is kept beside the node rather than written into `node.size`,
+ * because that field is the file's real byte count: the explorer displays it,
+ * and `buildCity` ranks building heights by it. Compressing it in place would
+ * silently corrupt both.
+ */
+interface WeightedItem {
+  node: TreeNode;
+  weight: number;
+}
+
+/**
+ * How strongly parcel area is compressed relative to raw bytes.
+ *
+ * Area used to be exactly proportional to size, which meant a single 400 KB
+ * changelog in a repository of 4 KB source files claimed a plot a hundred
+ * times the median and left the rest of the city as slivers around it. At 0.55
+ * that same file gets roughly a twelvefold plot instead of a hundredfold one.
+ *
+ * Ordering is untouched — the transform is strictly increasing, so a bigger
+ * file still gets a bigger plot, and the City Index's "plot area is
+ * approximately proportional to file bytes" stays true in the sense that
+ * matters to a reader comparing two buildings. Exact proportionality is what
+ * is traded away.
+ */
+const AREA_EXPONENT = 0.55;
+
+/**
+ * Weight a node for layout: sizes are floored at 1 so empty files still occupy
+ * a visible sliver, then compressed by {@link AREA_EXPONENT}.
+ */
+function weigh(node: TreeNode): WeightedItem {
+  return { node, weight: Math.pow(Math.max(node.size, 1), AREA_EXPONENT) };
+}
+
+/** Descending by weight — the order squarify expects. */
+function byWeightDescending(a: WeightedItem, b: WeightedItem): number {
+  return b.weight - a.weight;
 }
 
 /**
@@ -130,7 +168,7 @@ function applyDefaults(options?: LayoutOptions): NormalizedOptions {
  * remaining area and items are processed recursively.
  */
 function squarify(
-  items: TreeNode[],
+  items: WeightedItem[],
   rect: WorkRect,
   depth: number,
   cells: LayoutCell[],
@@ -142,12 +180,12 @@ function squarify(
   if (totalSize === 0) return;
 
   // Build a row greedily
-  const row: TreeNode[] = [items[0]];
-  let rowArea = items[0].size;
+  const row: WeightedItem[] = [items[0]];
+  let rowArea = items[0].weight;
 
   for (let i = 1; i < items.length; i++) {
     const candidate = [...row, items[i]];
-    const candidateArea = rowArea + items[i].size;
+    const candidateArea = rowArea + items[i].weight;
     if (
       worstAspect(candidate, totalSize, rect) <=
       worstAspect(row, totalSize, rect)
@@ -170,7 +208,7 @@ function squarify(
   let offset = 0;
 
   for (const item of row) {
-    const itemShare = item.size / rowArea;
+    const itemShare = item.weight / rowArea;
     const itemLength = itemShare * otherSide;
 
     let itemRect: LayoutRect;
@@ -192,25 +230,39 @@ function squarify(
       };
     }
 
-    // Apply padding that increases with depth
-    const pad = options.padding + options.depthScale * depth;
+    /*
+     * Gutter between this cell and its neighbours.
+     *
+     * The requested amount still grows with depth, so nested directories read
+     * as separate blocks. What is new is the ceiling: it is capped per axis at
+     * a fraction of that axis, and applied to width and height independently.
+     *
+     * Before, the gutter was a flat world-unit subtraction applied to both
+     * axes and compounded down the whole ancestor chain, so a file four levels
+     * deep lost 4.75 units from each side before its own parcel was measured.
+     * Two files of identical size ended up with wildly different plots purely
+     * because one sat deeper in the tree, thin cells were reduced to slivers,
+     * and any cell narrower than the gutter was silently dropped from the city
+     * altogether by the `> 0` guard below.
+     */
+    const requested = options.padding + options.depthScale * depth;
+    const padX = Math.min(requested, itemRect.w * MAX_GUTTER_FRACTION);
+    const padY = Math.min(requested, itemRect.h * MAX_GUTTER_FRACTION);
     const paddedRect: LayoutRect = {
-      x: itemRect.x + pad / 2,
-      y: itemRect.y + pad / 2,
-      w: Math.max(0, itemRect.w - pad),
-      h: Math.max(0, itemRect.h - pad),
+      x: itemRect.x + padX / 2,
+      y: itemRect.y + padY / 2,
+      w: Math.max(0, itemRect.w - padX),
+      h: Math.max(0, itemRect.h - padY),
       depth,
     };
 
-    if (item.type === 'file') {
+    if (item.node.type === 'file') {
       if (paddedRect.w > 0 && paddedRect.h > 0) {
-        cells.push({ node: item, rect: paddedRect });
+        cells.push({ node: item.node, rect: paddedRect });
       }
     } else {
       // Recurse into directory
-      const childItems = item.children
-        .map(normalizeSize)
-        .sort((a, b) => b.size - a.size);
+      const childItems = item.node.children.map(weigh).sort(byWeightDescending);
       squarify(childItems, paddedRect, depth + 1, cells, options);
     }
 
@@ -250,7 +302,7 @@ function squarify(
  * @returns The worst (largest) aspect ratio among the items in the row.
  */
 function worstAspect(
-  row: TreeNode[],
+  row: WeightedItem[],
   totalArea: number,
   rect: WorkRect,
 ): number {
@@ -263,7 +315,7 @@ function worstAspect(
 
   let worst = 0;
   for (const item of row) {
-    const itemLength = (item.size / rowArea) * otherSide;
+    const itemLength = (item.weight / rowArea) * otherSide;
     if (itemLength === 0) continue;
     const aspect = Math.max(
       (thickness * thickness) / (itemLength * itemLength),
@@ -278,10 +330,10 @@ function worstAspect(
 /**
  * Sum the sizes of an array of tree nodes.
  */
-function sumSizes(items: TreeNode[]): number {
+function sumSizes(items: WeightedItem[]): number {
   let total = 0;
   for (const item of items) {
-    total += item.size;
+    total += item.weight;
   }
   return total;
 }
