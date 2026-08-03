@@ -20,6 +20,56 @@ interface WorkerEnv {
 const PUBLIC_INGESTION_KEY = 'public-repository-ingestion-v1';
 const RATE_LIMIT_SECONDS = 60;
 
+/**
+ * Content Security Policy for the served application.
+ *
+ * `script-src` is strict `'self'`: the build emits one same-origin module and
+ * no inline script. `style-src` allows `'unsafe-inline'` because index.html
+ * ships a single inline <style> block and Three.js writes inline style
+ * attributes on the canvas; a hash would break silently on every CSS edit, and
+ * style injection is a far smaller risk than script injection, which stays
+ * locked down. Google Fonts needs the stylesheet host in `style-src` and the
+ * font host in `font-src`. `connect-src 'self'` is what keeps the browser from
+ * ever talking to GitHub directly -- the Worker is the only route out.
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  'upgrade-insecure-requests',
+].join('; ');
+
+/** Applied to every response RepoCity serves, assets and API alike. */
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'DENY',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+};
+
+/** Return a copy of `response` carrying the security headers. */
+export function withSecurityHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  // 101/204/304 and friends must not be given a body.
+  if (response.status === 101 || response.status === 204 || response.status === 304) {
+    return new Response(null, { status: response.status, statusText: response.statusText, headers });
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 interface RepositoryRequest {
   owner: string;
   repo: string;
@@ -30,7 +80,9 @@ interface RepositoryRequest {
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith('/api/')) {
+      return withSecurityHeaders(await env.ASSETS.fetch(request));
+    }
 
     const requestId = crypto.randomUUID();
     try {
@@ -134,7 +186,7 @@ async function handleRepositoryRequest(
     const cache = caches.default;
     const cached = await waitFor(cache.match(cacheRequest));
     throwIfAborted();
-    if (cached) return publicResponse(cached, 'HIT', client.getRateLimit(), requestId);
+    if (cached) return publicResponse(cached, 'HIT', requestId);
 
     const payload = await waitFor(buildRepositoryPayload(client, resolved, parsed.maxFiles));
     throwIfAborted();
@@ -152,7 +204,7 @@ async function handleRepositoryRequest(
       },
     });
     ctx.waitUntil(cache.put(cacheRequest, cachedResponse.clone()));
-    return publicResponse(cachedResponse, 'MISS', client.getRateLimit(), requestId);
+    return publicResponse(cachedResponse, 'MISS', requestId);
   } catch (error) {
     if (controller.signal.aborted) throwIfAborted();
     throw error;
@@ -215,21 +267,25 @@ function createCacheRequest(requestUrl: string, fullName: string, commitSha: str
   return new Request(url, { method: 'GET' });
 }
 
+/**
+ * GitHub's own `X-RateLimit-*` headers are deliberately NOT forwarded. They
+ * describe the shared server credential's quota, not the caller's, so passing
+ * them on both leaks the deployment's remaining budget to anonymous clients
+ * and tells an abuser exactly how close the instance is to exhaustion.
+ * RepoCity's own limits are communicated with 429 + Retry-After instead.
+ */
 function publicResponse(
   response: Response,
   cacheStatus: 'HIT' | 'MISS',
-  rateLimit: ReturnType<GithubClient['getRateLimit']>,
   requestId: string,
 ): Response {
   const headers = new Headers(response.headers);
   headers.set('Cache-Control', 'private, max-age=0, must-revalidate');
   headers.set('X-RepoCity-Cache', cacheStatus);
   headers.set('X-Request-Id', requestId);
-  if (rateLimit.limit) headers.set('X-RateLimit-Limit', rateLimit.limit);
-  if (rateLimit.remaining) headers.set('X-RateLimit-Remaining', rateLimit.remaining);
-  if (rateLimit.reset) headers.set('X-RateLimit-Reset', rateLimit.reset);
-  if (rateLimit.resource) headers.set('X-RateLimit-Resource', rateLimit.resource);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return withSecurityHeaders(
+    new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
+  );
 }
 
 function apiError(
@@ -240,13 +296,12 @@ function apiError(
   requestId: string,
   extraHeaders: HeadersInit = {},
 ): Response {
-  return Response.json({ error: { code, message, retryable, requestId } }, {
+  return withSecurityHeaders(Response.json({ error: { code, message, retryable, requestId } }, {
     status,
     headers: {
       ...Object.fromEntries(new Headers(extraHeaders)),
       'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
       'X-Request-Id': requestId,
     },
-  });
+  }));
 }
