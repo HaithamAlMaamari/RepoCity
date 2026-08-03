@@ -52,6 +52,7 @@
     "ci": "npm run check && npm run audit && wrangler deploy --dry-run",
     "audit": "npm audit --audit-level=high",
     "preview": "vite preview",
+    "capture": "node scripts/capture-cities.mjs",
     "worker:types": "wrangler types",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
     "deploy": "npm run build && wrangler deploy"
@@ -67,6 +68,7 @@
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.9.0",
+    "playwright": "^1.62.1",
     "prettier": "^3.9.6",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.65.0",

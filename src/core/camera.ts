@@ -36,7 +36,7 @@ import type { RandomSource } from './random';
  * sides.  Distance therefore comes from the *height* fit; width is whatever
  * that yields, bounded only so a very flat city cannot overflow absurdly.
  */
-const REST_HEIGHT_FILL = 0.86;
+const REST_HEIGHT_FILL = 0.88;
 const MAX_WIDTH_FILL = 1.5;
 /**
  * …and the other half of "no empty ground at the sides": the height fit alone
@@ -56,14 +56,39 @@ const MIN_WIDTH_FILL = 1.06;
  * keeps all of them and simply fills the frame rather than overflowing it.
  */
 const SMALL_CITY_BUILDINGS = 48;
-const SMALL_CITY_HEIGHT_FILL = 0.9;
+const SMALL_CITY_HEIGHT_FILL = 0.94;
 /** Tallest buildings excluded from the sizing box (outlier lockfile towers). */
 const DEFAULT_HEIGHT_PERCENTILE = 0.98;
 /**
  * How far above the clipped skyline the framed height may reach before the
  * outliers stop counting.  Keeps one freak tower from shrinking the whole city.
+ *
+ * This is the single strongest lever on how large the city reads, and it only
+ * bites on repositories that actually have an outlier — which is most of them,
+ * because one landmark tower reaches 72 while the ordinary skyline tops out at
+ * 30.  At 2.4 the solver was asked to fit a box 2.4× taller than the real
+ * skyline, so the city filled its height budget with empty air above the roofs
+ * and landed small in the frame.
+ *
+ * Measured through the rig on a 5,000-building city with one freak tower.
+ * `coverage` is the fraction of the free viewport the *buildings* cover;
+ * `worst aim` is the lowest the camera aims over a full orbit, as a fraction
+ * of the skyline height (negative = below ground):
+ *
+ *     headroom    2.4     1.8     1.6     1.5     1.35
+ *     coverage    0.75    0.81    ~0.90   0.96    1.03
+ *     worst aim  +0.33   -0.11   -0.30   -0.34   lower
+ *
+ * Both ends are bad.  High values fit empty air and shrink the city; low ones
+ * make the solver pin the skyline's top at some azimuths, which tilts the aim
+ * underground and fills the bottom of the frame with bare foreground — the
+ * same emptiness the framing exists to avoid.  1.6 buys most of the coverage
+ * before that sets in, and the periphery haze covers what foreground remains.
+ *
+ * Below ~1.4 the skyline is cropped vertically outright.  Note the outlier tip
+ * is *meant* to be cropped by the top edge rather than drag the camera back.
  */
-const OUTLIER_HEADROOM = 2.4;
+const OUTLIER_HEADROOM = 1.6;
 /** Hero three-quarter view, in radians: low, so facades dominate. */
 const DEFAULT_AZIMUTH = 0.66;
 const DEFAULT_ELEVATION = 0.32;

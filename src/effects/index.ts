@@ -2,7 +2,7 @@
  * Effects barrel — the definitive set.
  */
 
-export { buildSky } from './sky';
+export { buildSky, NIGHT_COLOR } from './sky';
 export type { Sky } from './sky';
 export { buildAtmosphere } from './atmosphere';
 export type { Atmosphere } from './atmosphere';

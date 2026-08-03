@@ -393,7 +393,6 @@ function addStripsMesh(
   const material = new THREE.MeshBasicMaterial({
     transparent: true,
     opacity: 0.58,
-    vertexColors: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     fog: true,

@@ -25,6 +25,16 @@ interface AirCar {
 
 const DEFAULT_PALETTE: readonly RGB[] = [[0.38, 0.87, 1]];
 
+/**
+ * Shortest street that can serve as a sky lane.
+ *
+ * Internal streets are clipped into short fragments by the building plots, so
+ * a high threshold here quietly restricts aerial traffic to the perimeter
+ * ring. Stage 4 reserves proper arterials; until then this stays low enough
+ * that any reasonable corridor qualifies.
+ */
+const MIN_CORRIDOR_LENGTH = 18;
+
 export function buildFlyingTraffic(
   streets: StreetSegment[],
   maxBuildingHeight: number,
@@ -32,9 +42,31 @@ export function buildFlyingTraffic(
   desiredCount = 48,
   palette: readonly RGB[] = DEFAULT_PALETTE,
 ): FlyingTraffic {
+  const corridors = streets.filter((street) => streetLength(street) >= MIN_CORRIDOR_LENGTH);
+  if (corridors.length === 0) {
+    // Nothing long enough to fly along. Without this guard `mesh.count` is 0,
+    // `setColorAt` is never reached, and `instanceColor` stays null.
+    const g = new THREE.BoxGeometry(1, 1, 1);
+    const m = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+    const mesh = new THREE.InstancedMesh(g, m, 0);
+    return { mesh, update() {}, dispose() { mesh.dispose(); g.dispose(); m.dispose(); } };
+  }
+
   const geo = new THREE.BoxGeometry(1.6, 0.5, 0.8);
+  /*
+   * Per-vehicle colour arrives through `setColorAt` -> `instanceColor`, which
+   * is all three needs: it defines USE_INSTANCING_COLOR and the fragment-side
+   * USE_COLOR by itself.
+   *
+   * Do NOT add `vertexColors: true` here. Three sets USE_COLOR from the
+   * material without checking that the geometry actually has a `color`
+   * attribute, and MeshBasicMaterial has no `defaultAttributeValues` fallback.
+   * A BoxGeometry has no such attribute, so the unbound generic attribute
+   * reads (0,0,0,1), `vColor *= color` zeroes it, and every vehicle renders
+   * pure black -- with instanceColor then multiplying zero. That was the bug.
+   */
   const mat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, vertexColors: true, depthWrite: false, fog: false,
+    color: 0xffffff, depthWrite: false, fog: false,
     toneMapped: false,
   });
 
@@ -43,10 +75,9 @@ export function buildFlyingTraffic(
   mesh.frustumCulled = false;
   mesh.renderOrder = 2;
 
-  const corridors = streets.filter((street) => streetLength(street) >= 25);
   const totalCorridorLength = corridors.reduce((sum, street) => sum + streetLength(street), 0);
   const cars: AirCar[] = [];
-  const count = corridors.length === 0 ? 0 : Math.min(desiredCount, Math.max(6, Math.floor(totalCorridorLength / 14)));
+  const count = Math.min(desiredCount, Math.max(6, Math.floor(totalCorridorLength / 14)));
   mesh.count = count;
   const altitudeRange = Math.max(12, Math.min(34, maxBuildingHeight * 0.48));
   for (let i = 0; i < count; i++) {
