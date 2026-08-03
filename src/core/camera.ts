@@ -77,18 +77,20 @@ const DEFAULT_HEIGHT_PERCENTILE = 0.98;
  *
  *     headroom    2.4     1.8     1.6     1.5     1.35
  *     coverage    0.75    0.81    ~0.90   0.96    1.03
- *     worst aim  +0.33   -0.11   -0.30   -0.34   lower
+ *     worst aim  +0.33   -0.11   -0.33   -0.44   -0.50
  *
- * Both ends are bad.  High values fit empty air and shrink the city; low ones
- * make the solver pin the skyline's top at some azimuths, which tilts the aim
- * underground and fills the bottom of the frame with bare foreground — the
- * same emptiness the framing exists to avoid.  1.6 buys most of the coverage
- * before that sets in, and the periphery haze covers what foreground remains.
+ * The synthetic fixture saturates near 1.0 coverage well before 1.35, but a
+ * real repository does not: react's box carries a lone 72-unit landmark over a
+ * ~30-unit skyline, so at 1.6 its buildings still filled only about three
+ * quarters of the gap between the side panels.  1.35 was chosen by looking at
+ * that live capture, not at the table.
  *
- * Below ~1.4 the skyline is cropped vertically outright.  Note the outlier tip
- * is *meant* to be cropped by the top edge rather than drag the camera back.
+ * The cost is the aim tilting toward the city's base at some azimuths, which
+ * shows more foreground — acceptable now that the periphery haze dissolves it,
+ * and not before.  Below ~1.3 the skyline starts being cropped outright; the
+ * outlier tip is *meant* to be cropped rather than drag the camera back.
  */
-const OUTLIER_HEADROOM = 1.6;
+const OUTLIER_HEADROOM = 1.35;
 /** Hero three-quarter view, in radians: low, so facades dominate. */
 const DEFAULT_AZIMUTH = 0.66;
 const DEFAULT_ELEVATION = 0.32;
@@ -949,10 +951,10 @@ interface EntranceKey {
  * the distance multipliers hover around 1 rather than pulling far back.
  */
 const ENTRANCE_KEYS: readonly EntranceKey[] = [
-  { azimuth: -1.78, elevation: 0.16, distance: 0.94, focus: 0.30 },
-  { azimuth: -1.20, elevation: 0.34, distance: 0.88, focus: 0.44 },
-  { azimuth: -0.66, elevation: 0.86, distance: 1.02, focus: 0.76 },
-  { azimuth: -0.22, elevation: 1.22, distance: 1.10, focus: 0.96 },
+  { azimuth: -1.78, elevation: 0.16, distance: 0.88, focus: 0.30 },
+  { azimuth: -1.20, elevation: 0.34, distance: 0.82, focus: 0.44 },
+  { azimuth: -0.66, elevation: 0.86, distance: 0.94, focus: 0.76 },
+  { azimuth: -0.22, elevation: 1.22, distance: 1.00, focus: 0.96 },
   { azimuth: 0.00, elevation: 1.00, distance: 1.00, focus: 1.00 },
 ];
 
