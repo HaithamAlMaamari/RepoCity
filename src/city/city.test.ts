@@ -28,9 +28,33 @@ describe('repository-relative skyline', () => {
   it('creates deterministic landmark tiers and bounds wide cores', () => {
     const city = buildCity(sourceCells(20));
     const heights = city.buildings.map((building) => building.totalHeight).sort((a, b) => a - b);
-    expect(heights.slice(-3)).toEqual([48, 60, 72]);
-    expect(city.buildings.filter((building) => building.profile === 'mega')).toHaveLength(3);
-    expect(city.buildings.every((building) => Math.max(building.scale[0], building.scale[2]) <= 12)).toBe(true);
+
+    /* the curve spans the full range … */
+    expect(heights[0]).toBeCloseTo(6, 5);
+    expect(heights[heights.length - 1]).toBeCloseTo(72, 5);
+
+    /*
+     * … strictly increasing, with no cliff in it. Heights used to come from
+     * two disjoint ranges (6..30 for ordinary files, 48..72 for landmarks), so
+     * adjacent files could differ by 60% with nothing rendered between them.
+     */
+    for (let i = 1; i < heights.length; i++) {
+      expect(heights[i]).toBeGreaterThan(heights[i - 1]);
+      expect(heights[i] - heights[i - 1]).toBeLessThan(12);
+    }
+
+    /* the tallest handful are still marked as landmarks for their detailing */
+    expect(city.buildings.filter((building) => building.profile === 'mega')).toHaveLength(1);
+    /*
+     * A building fills its plot on both axes. This replaced an absolute
+     * 12-unit span cap, which was applied isotropically but triggered on the
+     * longer axis, so a wide-shallow parcel produced a needle stranded in bare
+     * ground. What matters is the relationship to the plot, not the number.
+     */
+    for (const building of city.buildings) {
+      expect(building.scale[0] / building.parcel[0]).toBeCloseTo(0.9, 5);
+      expect(building.scale[2] / building.parcel[1]).toBeCloseTo(0.9, 5);
+    }
     city.dispose();
   });
 
@@ -41,6 +65,30 @@ describe('repository-relative skyline', () => {
     }));
     const city = buildCity(cells);
     expect(city.buildings.filter((building) => building.profile === 'mega')).toHaveLength(16);
+    city.dispose();
+  });
+
+  it('does not turn a four-file repository into a city of megatowers', () => {
+    /*
+     * The landmark count used to have a floor of 3, so a repository with four
+     * source files rendered three 48-72 unit towers next to a single stub.
+     */
+    const city = buildCity(sourceCells(4));
+    expect(city.buildings.filter((building) => building.profile === 'mega')).toHaveLength(0);
+    city.dispose();
+  });
+
+  it('never renders a bigger file as a shorter lit mass', () => {
+    /*
+     * `coreRatio` used to step down at the 0.4 percentile, so the visible box
+     * shrank 23% exactly where rank crossed it even though the file was
+     * larger. Core height must rise monotonically with rank.
+     */
+    const city = buildCity(sourceCells(120));
+    const byRank = [...city.buildings].sort((a, b) => a.size - b.size);
+    for (let i = 1; i < byRank.length; i++) {
+      expect(byRank[i].scale[1]).toBeGreaterThan(byRank[i - 1].scale[1]);
+    }
     city.dispose();
   });
 });

@@ -291,6 +291,32 @@ function rankOrder(cells: LayoutCell[], indices: readonly number[]): number[] {
 
 /* ── public API ───────────────────────────────────────── */
 
+/** Shortest and tallest a source building can be, in world units. */
+const SOURCE_MIN_HEIGHT = 6;
+const SOURCE_MAX_HEIGHT = 72;
+/**
+ * Shape of the height ramp across the source-file rank percentile.
+ *
+ * Above 1 the low city stays low and the skyline concentrates its drama at the
+ * top, which is what makes a handful of towers read as landmarks without
+ * needing a separate tier.
+ */
+const HEIGHT_CURVE = 2.0;
+
+/** Smoothstep on an already-normalised 0..1 input. */
+function smoothstep01(t: number): number {
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  return k * k * (3 - 2 * k);
+}
+
+/**
+ * Fraction of its parcel a building covers, leaving a gutter for the parcel
+ * line and whatever street runs alongside it.
+ */
+const SOURCE_PARCEL_FILL = 0.9;
+/** Depots sprawl: they are ground, not architecture. */
+const DEPOT_PARCEL_FILL = 0.94;
+
 export function buildCity(cells: LayoutCell[]): CityData {
   if (cells.length === 0) {
     const g = new THREE.BoxGeometry(1, 1, 1);
@@ -354,7 +380,13 @@ export function buildCity(cells: LayoutCell[]): CityData {
 
   const sourceCount = sourceOrder.length;
   const infraCount = infraOrder.length;
-  const landmarkCount = Math.min(sourceCount, 16, Math.max(3, Math.ceil(sourceCount * 0.05)));
+  /*
+   * Landmarks are a *labelling* of the top of the same height curve, not a
+   * separate tier with its own range. The old floor of 3 meant a repository
+   * with four source files rendered three 48-72 unit megatowers beside one
+   * 6-unit stub.
+   */
+  const landmarkCount = sourceCount <= 4 ? 0 : Math.min(16, Math.max(1, Math.round(sourceCount * 0.05)));
   const ordinaryCount = sourceCount - landmarkCount;
 
   for (let i = 0; i < n; i++) {
@@ -368,15 +400,26 @@ export function buildCity(cells: LayoutCell[]): CityData {
     let totalHeight: number;
     let profile: Building['profile'];
     let coreRatio: number;
-    let footprintScale: number;
+    let parcelFill: number;
     if (category === 'source') {
       const percentile = sourceCount > 1 ? rank / (sourceCount - 1) : 1;
-      totalHeight = rank >= ordinaryCount
-        ? 48 + 24 * ((rank - ordinaryCount) / Math.max(1, landmarkCount - 1))
-        : 6 + 24 * Math.pow(rank / Math.max(1, ordinaryCount - 1), 1.5);
+      /*
+       * One continuous curve for every source file. There used to be two
+       * disjoint ranges — ordinary files ran 6..30 and landmarks started at
+       * 48 — so two files adjacent in size could differ in height by 60% with
+       * nothing rendered in between.
+       */
+      totalHeight = SOURCE_MIN_HEIGHT +
+        (SOURCE_MAX_HEIGHT - SOURCE_MIN_HEIGHT) * Math.pow(percentile, HEIGHT_CURVE);
       profile = rank >= ordinaryCount ? 'mega' : percentile < 0.4 ? 'block' : percentile < 0.7 ? 'setback' : 'tower';
-      coreRatio = profile === 'block' ? 1 : profile === 'setback' ? 0.76 : profile === 'tower' ? 0.82 : 0.52;
-      footprintScale = Math.min(0.9, 12 / Math.max(r.w, r.h));
+      /*
+       * The lit core shrinks smoothly as buildings get taller, handing the top
+       * of the silhouette to crowns and spires. Stepping it per profile made
+       * the visible mass *drop* 23% at the 0.4 boundary — a bigger file
+       * rendering a shorter box than its smaller neighbour.
+       */
+      coreRatio = 1 - 0.45 * smoothstep01(percentile);
+      parcelFill = SOURCE_PARCEL_FILL;
     } else {
       // Depots: byte-proportional ground, capped height, wider fill. The
       // ceiling sits below the shortest ordinary building on purpose.
@@ -384,15 +427,32 @@ export function buildCity(cells: LayoutCell[]): CityData {
       totalHeight = 2.4 + 3.2 * percentile;
       profile = 'depot';
       coreRatio = 0.88;
-      footprintScale = Math.min(0.92, 18 / Math.max(r.w, r.h));
+      parcelFill = DEPOT_PARCEL_FILL;
     }
+    /*
+     * Footprint is now per-axis, and there is no absolute span cap.
+     *
+     * It used to be a single scalar, `min(0.9, 12 / max(w, h))`, applied to
+     * both axes: an ISOTROPIC shrink triggered by an ANISOTROPIC test. A
+     * 40x10 parcel therefore produced a 12x3 building — a needle marooned in
+     * the middle of its own plot, with the surrounding ground left bare. That
+     * was the largest single source of both the gaps between buildings and the
+     * "why is this one tiny" reading, and it was driven purely by the parcel's
+     * aspect ratio, nothing about the file.
+     *
+     * A building now simply fills its plot on both axes. Very large plots
+     * therefore make genuinely large buildings, which is honest; keeping them
+     * to a sane size is `normalizeSize`'s job, not this one's.
+     */
+    const footprintW = r.w * parcelFill;
+    const footprintD = r.h * parcelFill;
     const coreHeight = totalHeight * coreRatio;
     if (totalHeight > maxHeight) maxHeight = totalHeight;
 
     const col = languageColor(lang);
     buildings[i] = {
       position: [r.x + r.w / 2, coreHeight / 2, r.y + r.h / 2],
-      scale: [r.w * footprintScale, coreHeight, r.h * footprintScale],
+      scale: [footprintW, coreHeight, footprintD],
       parcel: [r.w, r.h],
       color: col,
       path: c.node.path, size: rawSize, language: lang, totalHeight, profile, category,
@@ -401,7 +461,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
     aTint[i] = languageEmissiveBoost(lang);
     aLit[i] = signHash(i * 7 + 42) > 0.90 ? 1.0 : 0.0;
     aKind[i] = category === 'source' ? 0 : 1;
-    aSpan[i] = Math.min(r.w * footprintScale, r.h * footprintScale);
+    aSpan[i] = Math.min(footprintW, footprintD);
     aBase[i * 3] = col[0]; aBase[i * 3 + 1] = col[1]; aBase[i * 3 + 2] = col[2];
   }
 
