@@ -35,6 +35,29 @@ describe('RepoCity Worker in Workerd', () => {
     expect(payload.error.code).toBe('method_not_allowed');
   });
 
+  // SECURITY.md lists "documented CSP and deployment security headers" as a
+  // release requirement. These assertions are what make that claim true.
+  it('serves the application with its full security header set', async () => {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(new IncomingRequest('https://repo.city/'), env, ctx);
+
+    const csp = response.headers.get('Content-Security-Policy') ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // The browser must never be able to reach GitHub directly.
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
+
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
+    expect(response.headers.get('Cross-Origin-Opener-Policy')).toBe('same-origin');
+    expect(response.headers.get('Strict-Transport-Security')).toContain('max-age=');
+    expect(response.headers.get('Permissions-Policy')).toContain('geolocation=()');
+  });
+
   it('observes already-aborted incoming requests in the runtime', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -105,6 +128,14 @@ describe('RepoCity Worker in Workerd', () => {
     expect(second.status).toBe(200);
     expect(second.headers.get('X-RepoCity-Cache')).toBe('HIT');
     expect(second.headers.get('ETag')).toBe(first.headers.get('ETag'));
+
+    // GitHub answered both upstream calls with X-RateLimit-* describing the
+    // server credential's quota. Neither the MISS nor the HIT may pass it on.
+    for (const header of ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'X-RateLimit-Resource']) {
+      expect(first.headers.get(header)).toBeNull();
+      expect(second.headers.get(header)).toBeNull();
+    }
+    expect(first.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
     expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/git/trees/'))).toHaveLength(1);
   });
 });
