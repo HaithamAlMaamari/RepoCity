@@ -95,11 +95,16 @@ const OUTLIER_HEADROOM = 1.35;
 const DEFAULT_AZIMUTH = 0.66;
 const DEFAULT_ELEVATION = 0.32;
 /** Cinematic entrance length, in seconds. */
-const DEFAULT_ENTRANCE_DURATION = 5.6;
+const DEFAULT_ENTRANCE_DURATION = 6.6;
 /** Seconds of stillness before the showcase drift resumes. */
-const DEFAULT_IDLE_DELAY = 8;
-/** Seconds the drift takes to ease from a standstill back to full speed. */
-const IDLE_RAMP = 4;
+const DEFAULT_IDLE_DELAY = 4;
+/**
+ * Seconds the drift takes to ease from a standstill back to full speed.
+ *
+ * Halved along with the delay: the perceived wait after letting go of the
+ * camera is delay + ramp, so cutting only one of them barely moves it.
+ */
+const IDLE_RAMP = 2;
 /** Showcase drift: constant radians per second (~3.7 minutes per orbit). */
 const DRIFT_SPEED = 0.028;
 /** Drone glide: the elevation breathes by this much, this slowly. */
@@ -946,15 +951,34 @@ interface EntranceKey {
 }
 
 /**
- * Low skyline sweep → rise and arc around → ease down into the hero view.
- * The rest pose is already low and close, so the arc stays near the city and
- * the distance multipliers hover around 1 rather than pulling far back.
+ * Four beats: a street-level rush past the skyline, a climb, a high aerial
+ * reveal of the whole city, then a descent that settles into the hero view.
+ *
+ * The shape matters more than any single number. Ending 160° from where it
+ * starts, having been both under and well above the hero elevation, is what
+ * makes the arrival feel like an arrival rather than a slow pan.
+ *
+ * Elevation multipliers are relative to the hero's ~18°, so they read lower
+ * than they look: 0.6 is barely 10° above the deck. Anything under ~0.8
+ * collapses the city into a band on the horizon with two thirds of the frame
+ * bare ground, because the distance floor keeps the camera outside the
+ * footprint and there is nothing near enough to fill the foreground. The
+ * opening therefore starts a little above the hero angle and dips beneath it
+ * on the sweep, rather than trying to skim the street.
+ *
+ * Only `focus` on the FIRST key is used — `applyEntrance` ramps the focus
+ * height from it to 1 with its own smoothstep, so the field is inert on the
+ * rest and left at its natural progression for readability.
+ *
+ * Distances stay at or above 1.0 deliberately: anything below is clamped up to
+ * `safeRadius`, which would silently flatten the move into a constant-radius
+ * pan on large repositories.
  */
 const ENTRANCE_KEYS: readonly EntranceKey[] = [
-  { azimuth: -1.78, elevation: 0.16, distance: 0.88, focus: 0.30 },
-  { azimuth: -1.20, elevation: 0.34, distance: 0.82, focus: 0.44 },
-  { azimuth: -0.66, elevation: 0.86, distance: 0.94, focus: 0.76 },
-  { azimuth: -0.22, elevation: 1.22, distance: 1.00, focus: 0.96 },
+  { azimuth: -2.85, elevation: 1.30, distance: 1.16, focus: 0.62 },
+  { azimuth: -2.05, elevation: 0.78, distance: 0.99, focus: 0.34 },
+  { azimuth: -1.25, elevation: 1.10, distance: 1.08, focus: 0.66 },
+  { azimuth: -0.50, elevation: 2.60, distance: 1.30, focus: 0.94 },
   { azimuth: 0.00, elevation: 1.00, distance: 1.00, focus: 1.00 },
 ];
 

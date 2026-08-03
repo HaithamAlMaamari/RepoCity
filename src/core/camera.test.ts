@@ -778,7 +778,7 @@ describe('showcase orbit framing', () => {
     const focused = camera.position.clone();
     /* the drift stays paused for the idle delay, then resumes around the
        user's own target — it must never yank the camera back to the orbit */
-    advance(rig, 7.5);
+    advance(rig, 3.5);
     expect(camera.position.distanceTo(focused)).toBeLessThan(1e-9);
     expect(orbitTarget.distanceTo(target)).toBeLessThan(1e-9);
 
@@ -799,24 +799,33 @@ describe('showcase orbit framing', () => {
 describe('cinematic entrance', () => {
   const buildings = makeCity(236, 170);
 
-  it('starts low and close, then rises and arcs into the hero framing', () => {
+  it('sweeps around and over the city, then settles exactly on the hero pose', () => {
     const { rig, camera, orbitTarget } = makeRig(buildings);
-    const start = camera.position.clone();
     const startAngle = horizontalAngle(camera, rig.framing.focus);
+    const heroY = rig.framing.position.y;
 
     expect(rig.entranceActive).toBe(true);
-    expect(start.y).toBeLessThan(rig.framing.position.y);
-    expect(start.distanceTo(rig.framing.focus)).toBeLessThan(rig.framing.distance);
 
-    advance(rig, 3);
-    expect(rig.entranceActive).toBe(true);
-    const midAngle = horizontalAngle(camera, rig.framing.focus);
-    expect(Math.abs(midAngle - startAngle)).toBeGreaterThan(0.3);
-    expect(camera.position.y).toBeGreaterThan(start.y);
+    /*
+     * The shape is the point, so assert the shape rather than any one frame.
+     * The move has to cover a wide arc, dip below the hero elevation, and rise
+     * well above it for the aerial reveal — a move that does all three reads
+     * as an arrival; one that does none of them is a slow pan.
+     */
+    let lowestY = camera.position.y;
+    let peakY = camera.position.y;
+    let widestArc = 0;
+    while (rig.entranceActive) {
+      rig.update(1 / 60);
+      lowestY = Math.min(lowestY, camera.position.y);
+      peakY = Math.max(peakY, camera.position.y);
+      widestArc = Math.max(widestArc, Math.abs(horizontalAngle(camera, rig.framing.focus) - startAngle));
+    }
+    expect(widestArc).toBeGreaterThan(1.2);
+    expect(lowestY).toBeLessThan(heroY);
+    expect(peakY).toBeGreaterThan(heroY * 1.25);
 
-    /* land exactly on the last entrance frame: the hero pose, before the
-       showcase drift takes the camera on round */
-    while (rig.update(1 / 60));
+    /* and it lands exactly on the hero pose, before the drift takes over */
     expect(rig.entranceActive).toBe(false);
     expect(camera.position.distanceTo(rig.framing.position)).toBeLessThan(1e-6);
     expect(orbitTarget.distanceTo(rig.framing.aim)).toBeLessThan(1e-6);
@@ -903,23 +912,32 @@ describe('cinematic entrance', () => {
 describe('idle showcase drift', () => {
   const buildings = makeCity(236, 170);
 
+  /*
+   * Pinned here rather than read from the module so the timings under test are
+   * explicit, and so retuning the shipped delay cannot silently turn these
+   * into assertions about nothing.
+   */
+  const IDLE_DELAY = 4;
+  const JUST_BEFORE_RESUME = IDLE_DELAY * 0.9;
+  const WELL_AFTER_RESUME = IDLE_DELAY + 8;
+
   function settledRig() {
-    return makeRig(buildings, { reducedMotion: true });
+    return makeRig(buildings, { reducedMotion: true, idleDelay: IDLE_DELAY });
   }
 
   it('stays still until the idle delay has passed', () => {
     const { rig, camera } = settledRig();
     const resting = camera.position.clone();
-    advance(rig, 7.5);
+    advance(rig, JUST_BEFORE_RESUME);
     expect(camera.position.distanceTo(resting)).toBeLessThan(1e-9);
   });
 
   it('drifts around the city once idle, holding the composed framing', () => {
-    const { rig, camera, orbitTarget } = makeRig(buildings, { reducedMotion: false });
+    const { rig, camera, orbitTarget } = makeRig(buildings, { reducedMotion: false, idleDelay: IDLE_DELAY });
     rig.skipEntrance();
     const restingAngle = horizontalAngle(camera, orbitTarget);
     const restingRadius = camera.position.distanceTo(orbitTarget);
-    advance(rig, 7.5);
+    advance(rig, JUST_BEFORE_RESUME);
     expect(Math.abs(horizontalAngle(camera, orbitTarget) - restingAngle)).toBeLessThan(1e-9);
 
     advance(rig, 25);
@@ -934,14 +952,14 @@ describe('idle showcase drift', () => {
   });
 
   it('pauses on interaction and resumes only after the idle delay', () => {
-    const { rig, camera } = makeRig(buildings, { reducedMotion: false });
+    const { rig, camera } = makeRig(buildings, { reducedMotion: false, idleDelay: IDLE_DELAY });
     rig.skipEntrance();
     advance(rig, 30);
     rig.noteInteraction();
     const paused = camera.position.clone();
-    advance(rig, 7.5);
+    advance(rig, JUST_BEFORE_RESUME);
     expect(camera.position.distanceTo(paused)).toBeLessThan(1e-9);
-    advance(rig, 12);
+    advance(rig, WELL_AFTER_RESUME);
     expect(camera.position.distanceTo(paused)).toBeGreaterThan(0.5);
   });
 
