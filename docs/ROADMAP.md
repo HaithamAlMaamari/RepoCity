@@ -4,6 +4,8 @@ This roadmap turns RepoCity from a strong prototype into a release that holds up
 
 **Current state, honestly:** small repositories (< ~50 files) render as genuinely beautiful neon cities — the window shaders, color crowns, and glow are portfolio-grade. Data accuracy is excellent: byte percentages cross-check against GitHub linguist within ~3%, canonical resolution and commit pinning work, and determinism holds across reloads. But mid-size cities settle into a frame where the city occupies under 20% of the screen, large repositories render as near-black silhouettes, one of the app's own preset chips fails, and the tallest building is a lockfile in four of eight tested repos. (An earlier draft also reported a 30-second build freeze; that was an artifact of a GPU-less test browser and is corrected in item 6.)
 
+> **Progress, 2026-08-03.** Phase 1 is done and a visual-quality pass is under way in stages — see [Visual quality pass](#visual-quality-pass-in-progress) at the foot of this document for what has landed, what is measured, and what is next.
+
 ---
 
 ## Phase 1 — The picture (ship-blockers)
@@ -60,3 +62,39 @@ The `torvalds/linux` chip — in the app's own header — fails with "GitHub ret
 ### Verified strengths to protect while doing all this
 
 Determinism across reloads (byte-identical layouts, tested); data accuracy (linguist-consistent byte percentages, canonical repo + commit pinning, complete-tree proofs); the small-repo aesthetic — window shaders, crown lighting, palette; the security posture of the worker (validated hostile input on both sides of the trust boundary, no client-side tokens, pseudonymized rate-limit keys); and the City Index legend, which honestly explains what is and isn't data. These are the product's soul — every change above should ship with a screenshot diff against a fixed (repo, commit, seed) to prove the soul is intact.
+
+---
+
+## Visual quality pass (in progress)
+
+A staged pass driven by eight defects found in live testing. Each stage is verified with `npm run capture` against a fixed set of repositories, not against fixtures — a synthetic uniform grid gave the wrong answer twice.
+
+### Landed
+
+**Stage 1 — vehicles, signs, framing, horizon** (`1410f4a`, `2b64cee`)
+
+- Every vehicle rendered black. `vertexColors: true` was set on geometry with no `color` attribute; three defines `USE_COLOR` from the material without checking the geometry, `MeshBasicMaterial` has no `defaultAttributeValues` fallback, so the unbound attribute read `(0,0,0,1)` and zeroed `vColor` before `instanceColor` applied. Six materials had it. Ground traffic was black too — on near-black asphalt, so it read as working. The old test asserted the CPU-side colour buffer, which was correct throughout; the new one asserts the material/geometry pairing.
+- District signs were yaw-only billboards, invisible edge-on from above. They now copy the camera's orientation.
+- The framing solver sized on a box capped at 2.4× the real skyline, so it fitted mostly empty air. Now 1.35. Measured cost: the worst-azimuth aim sits ~0.5 skyline-heights below ground, versus +0.33 before.
+- The bare plain around every city was a ground disc with `fog: false` that scene fog could not touch. Fogging it was necessary but not sufficient — the sky dome reached its bright horizon colour exactly at eye level, so the seam merely moved. One `NIGHT_COLOR` now feeds the clear colour, the fog and the dome's lower band.
+
+**Entrance and idle** (`bf41568`)
+
+- The drift resumed 8s after interaction and took 4s to reach speed — a ~12s wait. Both halved.
+- The entrance is now four beats over 6.6s: a three-quarter sweep, a dip, an aerial reveal at 2.6× the hero elevation, then a descent onto the hero pose. Elevation multipliers are relative to the hero's ~18°, so they read far lower than they look; anything under ~0.8 collapses the city to a band on the horizon. Distance multipliers below 1.0 are clamped to `safeRadius` and silently flatten the move.
+
+**Stage 2 — layout and size distribution** (`d4d3786`)
+
+- **The layout was deleting most of the repository.** The gutter between cells was an absolute world-unit subtraction that compounded per depth level (0.35 at the root, 4.75 by depth four), and `squarify` dropped any cell whose padded rect hit zero. react rendered 1,181 of 5,000 selected files while the UI reported all 5,000 as selected. The gutter is now capped per axis at a fraction of that axis. A regression test builds a five-level tree; against the old code 43 of its 44 files disappear.
+- Footprint was an isotropic shrink triggered by an anisotropic test, so a 40×10 parcel produced a 12×3 building marooned in its own plot. Buildings now fill their plot on both axes.
+- Plot area was exactly proportional to bytes; it is now compressed by a 0.55 power. Ordering is intact, extremes are pulled in. The weight is carried beside the node — `node.size` is the real byte count and both the explorer and the height ranking read it.
+- Heights came from two disjoint ranges (6..30, then 48..72) with nothing between, and `coreRatio` stepped at the 0.4 percentile in a way that made the visible mass *drop* 23% as rank rose. Both are continuous now.
+- `block` — 40% of source buildings — had no detail geometry at all.
+
+### Next
+
+**Stage 3 — brightness consistency.** Same-language buildings render at very different brightness. Four mechanisms, ranked by impact: `aLit` gives a ~10% index-seeded subset all its windows on plus 1.45× window and 1.86× rim brightness (~2.6× facade emissive); `aSpan` → `rcAssist` multiplies emissive by up to 3× and resists fog by 45%, driven by footprint alone (Stage 2 should have removed most of that variance — re-measure before changing it); `floorShift` jitters hue by up to 0.22, enough to cross the magenta→amber threshold where luminance differs ~2×; `rimPulse` is ±12% animated. Also `languageEmissiveBoost` is a misnomer — it returns hue warmth, not brightness, and magenta-family languages render systematically dimmer.
+
+**Stage 4 — interior roads, traffic, post FX.** Internal streets are carved from leftover gaps *after* the treemap tiles districts edge to edge, then clipped against full plot rects, so almost none survive and only the perimeter ring is left — which is why traffic circles the outside. Road space has to be reserved *before* parcels are allocated. Then migrate to pmndrs `postprocessing` for selective bloom, SMAA and ACES.
+
+**Camera framing against the reference.** The target is an immersive pose with the city overflowing all four edges. It needs the camera inside `safeRadius = cityRadius × 1.15 + 10`; lowering that floor puts the solve in a mixed regime where it binds at some azimuths and not others, and three drift-continuity assertions with 1e-9 tolerances then fail by 4.0, 0.07 and 11.0 — the orbit develops a kink and stops closing smoothly. It also breaks the module's "city fits the free viewport" contract across 12 tests, which is a product decision rather than tuning. Worth retrying now that Stage 2 has filled the voids that made close framing look sparse.
