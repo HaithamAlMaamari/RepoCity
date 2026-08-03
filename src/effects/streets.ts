@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import type { DistrictRect, PlotRect, StreetSegment } from '../types';
 import { makeRadialGlow } from './textures';
+import { FACADE_GLSL, fogFragmentGLSL } from '../city/facade-shader';
 
 export interface StreetNetwork {
   group: THREE.Group;
@@ -26,6 +27,7 @@ export function buildStreetNetwork(
   const disposables: { dispose(): void }[] = [];
 
   const { minX, maxX, minZ, maxZ } = cityBounds;
+  const plotSpan = medianPlotSpan(plots, cityBounds);
 
   // Every repository gets a connected transit ring in the two-unit margin
   // around the treemap, so small or tightly packed cities still have roads.
@@ -44,7 +46,13 @@ export function buildStreetNetwork(
   /* ---- surveyed city plate: the repository has a clear footprint ---- */
   const plateGeo = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ);
   plateGeo.rotateX(-Math.PI / 2);
-  const plateMat = new THREE.MeshBasicMaterial({ color: 0x071321, fog: true });
+  // The plate used to be darker than the unfogged far ground around it, and
+  // scene fog then took it the rest of the way down, so from an overview the
+  // repository read as a black hole punched into a lit plain. It is still
+  // the darkest large surface in the scene, just no longer zero, and the
+  // capped fog keeps the footprint legible at thumbnail distance.
+  const plateMat = new THREE.MeshBasicMaterial({ color: 0x0c1a2c, fog: true });
+  applyGroundShading(plateMat, `repocity-city-plate-v2:${plotSpan.toFixed(3)}`, plotSpan);
   const plate = new THREE.Mesh(plateGeo, plateMat);
   plate.position.set((minX + maxX) / 2, -0.04, (minZ + maxZ) / 2);
   plate.frustumCulled = false;
@@ -145,7 +153,10 @@ export function buildStreetNetwork(
   if (roadPos.length > 0) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(roadPos, 3));
-    const m = new THREE.MeshBasicMaterial({ color: 0x04040c, fog: true });
+    const m = new THREE.MeshBasicMaterial({ color: 0x090d1a, fog: true });
+    // Roads stay the darkest surface: half the plate's lift keeps the
+    // asphalt/plot contrast that makes the grid legible from above.
+    applyGroundShading(m, `repocity-road-surface-v2:${plotSpan.toFixed(3)}`, plotSpan, [0.010, 0.021, 0.036]);
     const mesh = new THREE.Mesh(g, m);
     mesh.frustumCulled = false;
     group.add(mesh);
@@ -156,7 +167,11 @@ export function buildStreetNetwork(
   const cyanPos: number[] = [];
   const magPos: number[] = [];
   const curbY = 0.07;
-  const strip = 0.10;
+  // A 0.10-wide curb is well under a pixel once the whole repository fits in
+  // a thumbnail, so the neon road network used to disappear exactly when it
+  // was the only thing left to read. Wider, brighter, and unfogged: the
+  // street grid is the shape of the city from above.
+  const strip = 0.16;
   let idx = 0;
   for (const s of streets) {
     const target = (idx++ % 3 === 0) ? magPos : cyanPos;
@@ -183,8 +198,11 @@ export function buildStreetNetwork(
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     const m = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.42,
-      blending: THREE.AdditiveBlending, depthWrite: false, fog: true,
+      // Unfogged, so the opacity comes back down: at a small repository's
+      // resting distance three's fog only dimmed these by ~29%, and the
+      // curbs must not read brighter up close than they did before.
+      color, transparent: true, opacity: 0.44,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
     });
     const mesh = new THREE.Mesh(g, m);
     mesh.frustumCulled = false;
@@ -213,7 +231,7 @@ export function buildStreetNetwork(
     const gGeo = new THREE.PlaneGeometry(4.5, 4.5);
     gGeo.rotateX(-Math.PI / 2);
     const gMat = new THREE.MeshBasicMaterial({
-      map: glowTex, transparent: true, opacity: 0.34,
+      map: glowTex, transparent: true, opacity: 0.38,
       blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
       vertexColors: true,
     });
@@ -311,6 +329,51 @@ export function buildStreetNetwork(
     group, streets,
     dispose() { for (const x of disposables) x.dispose(); },
   };
+}
+
+/**
+ * Capped fog for a ground surface, plus a faint lift so the city footprint
+ * keeps a colour at overview range. `MeshBasicMaterial` has no emissive, so
+ * the lift goes straight into `diffuseColor`.
+ *
+ * The gate is the same one the buildings use, fed with the median FILE PLOT
+ * size: the ground stops being legible for exactly the reason the buildings
+ * do — the parcels it is divided into fall below a handful of pixels. In a
+ * small repository the plots are tens of pixels wide, `rcAssist` is 0, and
+ * the surface renders exactly as it did before.
+ */
+function applyGroundShading(
+  material: THREE.MeshBasicMaterial,
+  cacheKey: string,
+  referenceSpan: number,
+  lift: readonly [number, number, number] = [0.020, 0.042, 0.070],
+): void {
+  const liftGlsl = `vec3( ${lift[0]}, ${lift[1]}, ${lift[2]} )`;
+  const spanGlsl = referenceSpan.toFixed(4);
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGroundWorld;')
+      .replace('#include <fog_vertex>', `
+        vGroundWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;
+        #include <fog_vertex>`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vGroundWorld;
+        float rcGroundAssist = 0.0;
+${FACADE_GLSL}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        rcGroundAssist = rcAssist( vGroundWorld, ${spanGlsl} );
+        diffuseColor.rgb += ${liftGlsl} * rcGroundAssist;`)
+      .replace('#include <fog_fragment>', fogFragmentGLSL('vGroundWorld', 'rcGroundAssist', '0.25'));
+  };
+  material.customProgramCacheKey = () => cacheKey;
+}
+
+/** Median plot footprint — the ground's equivalent of a building span. */
+function medianPlotSpan(plots: readonly PlotRect[], cityBounds: { minX: number; maxX: number }): number {
+  if (plots.length === 0) return Math.max(1, (cityBounds.maxX - cityBounds.minX) / 8);
+  const spans = plots.map((plot) => Math.min(plot.w, plot.d)).sort((a, b) => a - b);
+  return Math.max(0.25, spans[spans.length >> 1]);
 }
 
 function districtColor(name: string, target: THREE.Color): THREE.Color {

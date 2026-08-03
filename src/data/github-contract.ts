@@ -1,6 +1,6 @@
 export const TREE_API_SCHEMA_VERSION = 1 as const;
 export const MAX_SELECTED_FILES = 5_000;
-export const SAMPLING_POLICY = 'district-language-bottom-k-v1' as const;
+export const SAMPLING_POLICY = 'district-language-representative-v2' as const;
 export const LANGUAGE_POLICY = 'extension-v1' as const;
 
 export interface RepositoryIdentity {

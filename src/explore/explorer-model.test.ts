@@ -21,7 +21,10 @@ function fixture(): FetchResult {
 }
 
 function building(path: string): Building {
-  return { path, size: 1, language: 'typescript', position: [0, 0, 0], scale: [1, 1, 1], parcel: [1.2, 1.2], color: [1, 1, 1], totalHeight: 1, profile: 'block' };
+  return {
+    path, size: 1, language: 'typescript', position: [0, 0, 0], scale: [1, 1, 1],
+    parcel: [1.2, 1.2], color: [1, 1, 1], totalHeight: 1, profile: 'block', category: 'source',
+  };
 }
 
 describe('rendered-file explorer model', () => {

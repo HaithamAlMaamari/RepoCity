@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { createSceneRandom } from '../core/random';
 import type { StreetSegment } from '../types';
+import { buildCity } from '../city/city';
+import type { LayoutCell } from '../city/layout';
 import { buildFlyingTraffic } from './flying-traffic';
 import { buildEmbers } from './particles';
 import { buildSky } from './sky';
@@ -73,5 +75,22 @@ describe('seeded scene effects', () => {
     const colors = Array.from(traffic.mesh.instanceColor!.array);
     expect(colors.slice(0, 9)).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
     traffic.dispose();
+  });
+
+  it('places identical building instances for identical layouts', () => {
+    // buildCity takes no RandomSource on purpose: the skyline is a pure
+    // function of the layout, including the source/infrastructure split.
+    const cells = (): LayoutCell[] => [
+      { node: { name: 'a.ts', path: 'src/a.ts', type: 'file', size: 1_200, language: 'typescript', children: [] }, rect: { x: 0, y: 0, w: 8, h: 8, depth: 0 } },
+      { node: { name: 'b.py', path: 'src/b.py', type: 'file', size: 6_400, language: 'python', children: [] }, rect: { x: 9, y: 0, w: 8, h: 8, depth: 0 } },
+      { node: { name: 'yarn.lock', path: 'yarn.lock', type: 'file', size: 2_000_000, language: 'lockfile', children: [] }, rect: { x: 0, y: 9, w: 17, h: 17, depth: 0 } },
+    ];
+    const first = buildCity(cells());
+    const second = buildCity(cells());
+    expect(Array.from(first.mesh.instanceMatrix.array)).toEqual(Array.from(second.mesh.instanceMatrix.array));
+    expect(first.tallestSourceFile?.path).toBe(second.tallestSourceFile?.path);
+    expect(first.tallestSourceFile?.path).toBe('src/b.py');
+    first.dispose();
+    second.dispose();
   });
 });

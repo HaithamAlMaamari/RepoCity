@@ -194,9 +194,6 @@
         align-items: center;
         gap: 8px;
         max-width: 320px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
       #status::before {
         content: '';
@@ -207,7 +204,59 @@
         flex-shrink: 0;
         box-shadow: 0 0 8px var(--accent);
       }
+      .status-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* failures expand the pill instead of clipping the reason; taking it out
+         of flow keeps the input and buttons from shifting when one appears */
+      #status.expanded {
+        position: absolute;
+        top: 14px;
+        right: 22px;
+        align-items: flex-start;
+        box-shadow: var(--shadow);
+        z-index: 11;
+      }
+      #status.expanded::before { margin-top: 4px; }
+      #status.expanded .status-text {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .status-detail {
+        display: block;
+        margin-top: 4px;
+        color: var(--dim);
+        opacity: 0.9;
+        font-size: 10.5px;
+        line-height: 1.5;
+      }
+      .status-dismiss {
+        flex-shrink: 0;
+        margin: -4px -8px -4px 0;
+        padding: 0 6px;
+        min-width: 20px;
+        line-height: 1.4;
+        font-size: 14px;
+        color: inherit;
+        background: transparent;
+        border: 0;
+        border-radius: 5px;
+        backdrop-filter: none;
+        opacity: 0.7;
+      }
+      .status-dismiss:hover:not(:disabled) {
+        opacity: 1;
+        box-shadow: none;
+        border-color: transparent;
+      }
       #status.err { color: var(--err); }
+      #status.err .status-detail { color: var(--err); }
       #status.err::before { background: var(--err); box-shadow: 0 0 8px var(--err); }
       #status.pulse::before { animation: dotPulse 1.4s ease-in-out infinite; }
       @keyframes dotPulse {
@@ -557,6 +606,8 @@
       /* Mobile */
       @media (max-width: 720px) {
         header { flex-wrap: wrap; gap: 8px; padding: 12px; }
+        #status { max-width: 100%; }
+        #status.expanded { position: static; }
         .input-wrap input { width: calc(100vw - 220px); min-width: 160px; }
         .presets { display: none; }
         #sidebar { width: calc(100vw - 24px); left: 12px; right: 12px; top: 185px; max-height: 168px; padding: 12px 14px; box-sizing: border-box; }
@@ -580,7 +631,7 @@
     <canvas id="stage" aria-label="Interactive repository city visualization" aria-describedby="semantic-legend explorer-coverage"></canvas>
     <div class="grain"></div>
 
-    <header>
+    <header id="topbar">
       <div class="brand">
         repo<span class="dot">.</span>city<span class="ver">v2</span>
       </div>
@@ -603,8 +654,8 @@
       <button class="chip" data-repo="vuejs/vue">vuejs/vue</button>
       <button class="chip" data-repo="microsoft/vscode">microsoft/vscode</button>
       <button class="chip" data-repo="rust-lang/rust">rust-lang/rust</button>
-      <button class="chip" data-repo="torvalds/linux">torvalds/linux</button>
-      <button class="chip" data-repo="three.js/three.js" data-actual="mrdoob/three.js">three.js</button>
+      <button class="chip" data-repo="pallets/flask">flask</button>
+      <button class="chip" data-repo="mrdoob/three.js">three.js</button>
       <button class="chip" data-repo="tailwindlabs/tailwindcss">tailwindcss</button>
     </div>
 
@@ -626,7 +677,7 @@
           <div class="stat-val" id="stat-dirs">—</div>
         </div>
         <div>
-          <div class="stat-label">tallest</div>
+          <div class="stat-label">tallest source</div>
           <div class="stat-val" id="stat-tallest">—</div>
         </div>
       </div>
@@ -705,20 +756,6 @@
       </div>
     </div>
 
-    <script>
-      // Repo preset chips
-      document.querySelectorAll('.chip').forEach((el) => {
-        el.addEventListener('click', () => {
-          const repo = el.getAttribute('data-actual') || el.getAttribute('data-repo');
-          const input = document.getElementById('repo');
-          const goBtn = document.getElementById('go');
-          if (input && goBtn && repo) {
-            input.value = repo;
-            goBtn.click();
-          }
-        });
-      });
-    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
