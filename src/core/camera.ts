@@ -760,7 +760,6 @@ export function computeCityFraming(
   );
 
   viewBasis(azimuth, elevation);
-  const dir = _dir.clone();
   const right = _right.clone();
   const up = _up.clone();
   const forward = _forward.clone();
@@ -1062,9 +1061,9 @@ export function createCityCameraRig(options: CityCameraOptions): CityCameraRig {
    * needs a different distance from its short side than from its long one; a
    * table plus Catmull-Rom sampling keeps that continuous instead of popping.
    */
-  let orbitDistance = new Float64Array(ORBIT_SAMPLES);
-  let orbitBiasX = new Float64Array(ORBIT_SAMPLES);
-  let orbitBiasY = new Float64Array(ORBIT_SAMPLES);
+  const orbitDistance = new Float64Array(ORBIT_SAMPLES);
+  const orbitBiasX = new Float64Array(ORBIT_SAMPLES);
+  const orbitBiasY = new Float64Array(ORBIT_SAMPLES);
   let orbitMaxDistance = 0;
 
   buildOrbitTable();

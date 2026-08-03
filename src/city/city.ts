@@ -315,7 +315,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
   }
 
   const n = cells.length;
-  const buildings: Building[] = new Array(n);
+  const buildings: Building[] = new Array<Building>(n);
   const aId = new Float32Array(n);
   const aTint = new Float32Array(n);
   const aLit = new Float32Array(n);
@@ -329,8 +329,8 @@ export function buildCity(cells: LayoutCell[]): CityData {
   let maxHeight = 0;
 
   /* ---- source vs infrastructure ---- */
-  const languages: string[] = new Array(n);
-  const categories: BuildingCategory[] = new Array(n);
+  const languages: string[] = new Array<string>(n);
+  const categories: BuildingCategory[] = new Array<BuildingCategory>(n);
   for (let i = 0; i < n; i++) {
     const node = cells[i].node;
     languages[i] = node.language ?? detectLang(node.name);

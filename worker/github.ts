@@ -229,7 +229,7 @@ export class GithubClient {
 
 async function readTextWithLimit(response: Response, maxBytes: number): Promise<string> {
   if (!response.body) return '';
-  const reader = response.body.getReader();
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
   let bytes = 0;

@@ -16,7 +16,6 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { fetchRepoTree } from './data/github';
 import type { FetchResult } from './data/github';
 import { buildLayout, repositoryLandSize } from './city/layout';
-import type { LayoutCell } from './city/layout';
 import { buildCity, tallestSourceBuilding } from './city/city';
 import type { CityData, Building } from './city/city';
 import { buildRooftops } from './city/rooftops';
@@ -41,7 +40,7 @@ import type {
 
 /* ═══ DOM ═══════════════════════════════════════════════ */
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
-const headerEl = document.getElementById('topbar') as HTMLElement;
+const headerEl = document.getElementById('topbar')!;
 const presetChips = document.querySelectorAll<HTMLButtonElement>('.presets .chip');
 const repoInput = document.getElementById('repo') as HTMLInputElement;
 const goBtn = document.getElementById('go') as HTMLButtonElement;
@@ -51,7 +50,7 @@ const statusEl = document.getElementById('status') as HTMLDivElement;
 const loadingEl = document.getElementById('loading') as HTMLDivElement;
 const noGpuEl = document.getElementById('no-gpu') as HTMLDivElement;
 
-const sidebarEl = document.getElementById('sidebar') as HTMLElement;
+const sidebarEl = document.getElementById('sidebar')!;
 const repoNameEl = document.getElementById('repo-name')!;
 const repoBranchEl = document.getElementById('repo-branch')!;
 const repoCoverageEl = document.getElementById('repo-coverage')!;
@@ -62,12 +61,12 @@ const statDirsEl = document.getElementById('stat-dirs')!;
 const statTallestEl = document.getElementById('stat-tallest')!;
 const langBarsEl = document.getElementById('lang-bars')!;
 
-const infoEl = document.getElementById('info') as HTMLElement;
+const infoEl = document.getElementById('info')!;
 const infoFilenameEl = document.getElementById('info-filename')!;
 const infoPathEl = document.getElementById('info-path')!;
 const infoSizeEl = document.getElementById('info-size')!;
 const infoLangEl = document.getElementById('info-lang')!;
-const explorerPanelEl = document.getElementById('explore-panel') as HTMLElement;
+const explorerPanelEl = document.getElementById('explore-panel')!;
 const explorerToggleEl = document.getElementById('explorer-toggle') as HTMLButtonElement;
 const summaryToggleEl = document.getElementById('summary-toggle') as HTMLButtonElement;
 const explorerCoverageEl = document.getElementById('explorer-coverage')!;
@@ -241,7 +240,7 @@ async function init(): Promise<void> {
 
   /* events */
   goBtn.addEventListener('click', handleGo);
-  repoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleGo(); });
+  repoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') void handleGo(); });
   captureBtn.addEventListener('click', capturePoster);
   captureHeaderBtn.addEventListener('click', capturePoster);
   window.addEventListener('resize', scheduleResize);
@@ -342,7 +341,7 @@ async function loadRepo(
     const layoutSize = landSize - 4 + layoutPadding;
     const cells = buildLayout(result.root, {
       width: layoutSize, height: layoutSize, padding: layoutPadding, depthScale: 0.3,
-    }) as LayoutCell[];
+    });
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     teardown();
@@ -758,7 +757,7 @@ function showInfo(b: Building): void {
   swatch.style.background = hex;
   swatch.style.color = hex;
   infoLangEl.replaceChildren(swatch, document.createTextNode(languageDisplayName(lang)));
-  (infoLangEl as HTMLElement).style.color = hex;
+  infoLangEl.style.color = hex;
   infoEl.classList.add('visible');
   infoEl.hidden = false;
   openFileEl.href = activeResult
@@ -877,7 +876,11 @@ function applyExplorerFilters(announce: boolean): void {
   if (selectedBuildingId >= 0 && explorerView.matchMask[selectedBuildingId] !== 1) clearSelection(true);
   setHovered(-1);
   const total = cityData.buildings.length;
-  explorerResultsEl.textContent = `${explorerView.matchingFiles.toLocaleString()} matching rendered file${explorerView.matchingFiles === 1 ? '' : 's'} of ${total.toLocaleString()}.`;
+  const resultSummary = `${explorerView.matchingFiles.toLocaleString()} matching rendered file${explorerView.matchingFiles === 1 ? '' : 's'} of ${total.toLocaleString()}.`;
+  explorerResultsEl.textContent = resultSummary;
+  // Only a filter the user just changed is worth interrupting for -- initial
+  // and hash-driven renders would otherwise announce a count nobody asked for.
+  if (announce) selectionStatusEl.textContent = resultSummary;
   treeEmptyEl.hidden = explorerView.matchingFiles > 0;
   treeEmptyEl.textContent = filtering ? 'No rendered files match these filters.' : 'No files are rendered for this repository.';
   const containsPath = (nodes: readonly ExplorerNode[]): boolean => nodes.some((node) => node.path === activeTreePath || containsPath(node.children));
@@ -888,7 +891,6 @@ function applyExplorerFilters(announce: boolean): void {
   }
   renderExplorerTree();
   renderBreadcrumbs();
-  void announce;
 }
 
 function renderExplorerTree(): void {

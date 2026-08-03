@@ -25,7 +25,7 @@ describe('RepoCity Worker in Workerd', () => {
     const response = await worker.fetch(new IncomingRequest('https://repo.city/api/repositories/owner/repo/tree', {
       method: 'POST',
     }), env, ctx);
-    const payload = await response.json() as { error: { code: string; requestId: string } };
+    const payload = await response.json<{ error: { code: string; requestId: string } }>();
 
     expect(response.status).toBe(405);
     expect(response.headers.get('Allow')).toBe('GET');
@@ -65,7 +65,7 @@ describe('RepoCity Worker in Workerd', () => {
     const response = await worker.fetch(new IncomingRequest('https://repo.city/api/repositories/owner/repo/tree', {
       signal: controller.signal,
     }), env, ctx);
-    const payload = await response.json() as { error: { code: string } };
+    const payload = await response.json<{ error: { code: string } }>();
 
     expect(response.status).toBe(499);
     expect(payload.error.code).toBe('request_cancelled');
@@ -78,7 +78,7 @@ describe('RepoCity Worker in Workerd', () => {
       cancel,
     });
     const fetchMock = vi.fn().mockResolvedValue(new Response(body, { headers: { 'Content-Type': 'application/json' } }));
-    const client = new GithubClient(undefined, new AbortController().signal, fetchMock as unknown as typeof fetch);
+    const client = new GithubClient(undefined, new AbortController().signal, fetchMock);
 
     await expect(client.getJson('/test')).rejects.toMatchObject({ status: 413, code: 'response_too_large' });
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -115,7 +115,7 @@ describe('RepoCity Worker in Workerd', () => {
     const firstContext = createExecutionContext();
     const first = await worker.fetch(new IncomingRequest(requestUrl), env, firstContext);
     await waitOnExecutionContext(firstContext);
-    const firstBody = await first.json() as { totals: { files: number; bytes: number } };
+    const firstBody = await first.json<{ totals: Record<string, number> }>();
 
     const secondContext = createExecutionContext();
     const second = await worker.fetch(new IncomingRequest(requestUrl), env, secondContext);

@@ -138,7 +138,6 @@ function squarify(
 ): void {
   if (items.length === 0) return;
 
-  const s = Math.min(rect.w, rect.h);
   const totalSize = sumSizes(items);
   if (totalSize === 0) return;
 
@@ -150,8 +149,8 @@ function squarify(
     const candidate = [...row, items[i]];
     const candidateArea = rowArea + items[i].size;
     if (
-      worstAspect(candidate, s, totalSize, rect) <=
-      worstAspect(row, s, totalSize, rect)
+      worstAspect(candidate, totalSize, rect) <=
+      worstAspect(row, totalSize, rect)
     ) {
       row.push(items[i]);
       rowArea = candidateArea;
@@ -246,14 +245,12 @@ function squarify(
  * Lower values mean the rectangles in the row are closer to squares.
  *
  * @param row       The items in the candidate row.
- * @param s         The shorter side of the remaining rectangle.
  * @param totalArea The total size of all items being laid out.
  * @param rect      The remaining rectangle to fill.
  * @returns The worst (largest) aspect ratio among the items in the row.
  */
 function worstAspect(
   row: TreeNode[],
-  s: number,
   totalArea: number,
   rect: WorkRect,
 ): number {
