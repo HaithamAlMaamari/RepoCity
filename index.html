@@ -8,9 +8,22 @@
     <meta property="og:title" content="repo.city — github repos as 3d cities" />
     <meta property="og:description" content="Visualize any GitHub repository as a generative 3D city. Files become buildings, folders become districts." />
     <meta property="og:type" content="website" />
+    <!--
+      Relative og:image. Facebook, Twitter/X, Slack and Discord all resolve it
+      against the page URL, so the card works on any host the app is served
+      from. Switch to an absolute https:// URL once a permanent domain is live
+      -- a few smaller scrapers require one.
+    -->
+    <meta property="og:image" content="/og.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The React repository rendered as a neon 3D city, each building a source file." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="repo.city — github repos as 3d cities" />
     <meta name="twitter:description" content="Visualize any GitHub repository as a generative 3D city." />
+    <meta name="twitter:image" content="/og.jpg" />
+    <meta name="twitter:image:alt" content="The React repository rendered as a neon 3D city, each building a source file." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
