@@ -24,6 +24,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildCityPage, hideInterface, watchErrors } from './lib/city-page.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,8 +42,6 @@ const FIXTURES = [
 ];
 
 const VIEWPORT = { width: 1600, height: 900 };
-/** Long enough for the entrance camera to settle before we look. */
-const SETTLE_MS = 15_000;
 
 const args = process.argv.slice(2);
 const label = args.find((a) => !a.startsWith('--')) ?? 'run';
@@ -70,46 +69,17 @@ const results = [];
 
 for (const fixture of selected) {
   const page = await browser.newPage({ viewport: VIEWPORT });
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e).slice(0, 200)));
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(m.text().slice(0, 200));
-  });
+  const errors = watchErrors(page);
 
   try {
-    await page.goto(baseUrl, { waitUntil: 'load' });
-    // The app auto-builds a default repo on load; let that finish first so it
-    // cannot overwrite the build we are about to request.
-    await page.waitForTimeout(6000);
-
-    await page.fill('#repo', fixture.repo);
-    await page.click('#go');
-
-    const started = Date.now();
-    let status = '';
-    while (Date.now() - started < 180_000) {
-      status = (await page.textContent('#status').catch(() => '')) ?? '';
-      if (!/fetching|building|rebuilding|initial/i.test(status)) break;
-      await page.waitForTimeout(500);
+    // Throws rather than screenshotting whatever happened to be on screen.
+    const { status, canonical } = await buildCityPage(page, baseUrl, fixture.repo);
+    // Surfaced, not swallowed: a redirect means the fixture name is stale.
+    if (canonical.toLowerCase() !== fixture.repo.toLowerCase()) {
+      console.log(`  ${fixture.key.padEnd(9)} note: ${fixture.repo} redirects to ${canonical}`);
     }
 
-    await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(SETTLE_MS);
-
-    if (!keepUi) {
-      /*
-       * `display: none`, not opacity. The camera solver measures panels via
-       * getClientRects and deliberately ignores opacity, so an opacity-hidden
-       * panel still shrinks the free viewport and mis-frames the shot.
-       */
-      await page.addStyleTag({
-        content: `#topbar, .presets, #sidebar, #explore-panel, #info,
-                  #loading, .hint-row, .grain { display: none !important; }`,
-      });
-      // Let the solver observe the larger viewport and re-frame.
-      await page.evaluate(() => window.dispatchEvent(new Event('resize')));
-      await page.waitForTimeout(2500);
-    }
+    if (!keepUi) await hideInterface(page);
 
     const buf = await page.locator('#stage').screenshot({ type: 'png' });
     const file = join(outDir, `${fixture.key}.png`);

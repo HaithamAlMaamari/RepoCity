@@ -53,6 +53,7 @@
     "audit": "npm audit --audit-level=high",
     "preview": "vite preview",
     "capture": "node scripts/capture-cities.mjs",
+    "measure": "node scripts/measure-brightness.mjs",
     "worker:types": "wrangler types",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
     "deploy": "npm run build && wrangler deploy"

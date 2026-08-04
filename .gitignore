@@ -32,3 +32,6 @@ worker-configuration.d.ts
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local agent/tooling config
+.claude/
