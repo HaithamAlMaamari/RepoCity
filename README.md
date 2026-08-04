@@ -10,7 +10,7 @@
 ## Features
 
 - **Repo → city, deterministically.** The same repository at the same commit with the same seed always produces the same city — buildings, streets, traffic, stars, and all. Share the URL and everyone sees the identical scene.
-- **Districts follow your directory tree.** A treemap layout carves the map into districts per top-level directory; building height tracks file size and facade colors track language.
+- **Districts follow your directory tree.** A treemap layout carves the map into districts per directory. Height ranks a file among the repository's *source* files, so lockfiles and generated blobs render as low depots instead of owning the skyline; colour tracks language; and every file in a folder is built to the same architectural typology, so neighbourhoods read as neighbourhoods.
 - **A living city.** Street networks, ground and flying traffic, rooftop details, billboards, atmosphere, and particle effects — all procedurally generated from repository data.
 - **Explore mode.** A keyboard-accessible file explorer synced to the 3D scene: select a building to inspect the file, or walk the tree to fly to its building.
 - **Poster capture.** Export a 1920×1080 poster of any city for sharing.
@@ -65,7 +65,7 @@ The architecture decision record lives in [`docs/architecture/ADR-001-github-dat
 ## Project Structure
 
 - `src/data` — GitHub ingestion, contract validation, and repository modeling
-- `src/city` — treemap layout, districts, buildings, palettes, and architecture details
+- `src/city` — treemap layout, districts, buildings, palettes, file classification, per-district building typologies, and the shared facade shader
 - `src/effects` — streets, ground and flying traffic, billboards, atmosphere, sky, and particles
 - `src/explore` — the file-explorer model backing Explore mode
 - `src/core` — camera, seeded randomness, and URL state
@@ -75,13 +75,23 @@ The architecture decision record lives in [`docs/architecture/ADR-001-github-dat
 ## Quality Checks
 
 ```sh
+npm run lint        # ESLint across app, worker, and scripts
 npm run typecheck   # strict TS, app + worker targets
 npm test            # unit tests + isolated Workerd runtime suite
 npm run build       # typecheck + production build
 npm run ci          # the full release gate CI runs
 ```
 
-`npm run ci` reproduces the GitHub Actions gate: tests, both TypeScript targets, production build, high-severity dependency audit, and a Cloudflare deployment dry run. The Workerd suite validates real Worker bindings, request signals, streamed body limits, and Cache API behavior without production credentials or external network access.
+`npm run ci` reproduces the GitHub Actions gate: lint, unit tests, the Workerd runtime suite, both TypeScript targets, a production build, a high-severity dependency audit, and a Cloudflare deployment dry run. The Workerd suite validates real Worker bindings, request signals, streamed body limits, and Cache API behavior without production credentials or external network access.
+
+Two developer tools sit deliberately outside the gate, because they need a GPU and network access:
+
+```sh
+npm run capture <label>   # render the fixture repositories to artifacts/captures/<label>
+npm run measure           # report what the building shader is fed, per building
+```
+
+Both require `npm run dev` and a local Chrome. Visual changes are verified by comparing two labelled capture runs of the same repositories at pinned commits — a synthetic fixture has given the wrong answer more than once.
 
 ## Security
 
