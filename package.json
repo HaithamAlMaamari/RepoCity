@@ -76,5 +76,8 @@
     "vite": "6.4.3",
     "vitest": "4.1.10",
     "wrangler": "4.114.0"
+  },
+  "overrides": {
+    "undici": "^7.29.0"
   }
 }
