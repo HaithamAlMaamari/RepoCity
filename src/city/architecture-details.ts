@@ -15,7 +15,17 @@
 
 import * as THREE from 'three';
 import type { Building } from './city';
-import { FACADE_GLSL, fogFragmentGLSL } from './facade-shader';
+import {
+  FACADE_GLSL, fogFragmentGLSL, glslFloat, normalizeLuma, planSpan, WINDOW_EMISSIVE,
+} from './facade-shader';
+
+/**
+ * Crowns carry slightly less window emissive than a core, as they always
+ * have. Expressed against the core's value rather than as its own literal, so
+ * the two cannot drift apart the next time the bloom threshold is weighed —
+ * which is the exact way the window grid and the crown grid diverged before.
+ */
+const CROWN_WINDOW_EMISSIVE = Number((WINDOW_EMISSIVE * 0.95).toFixed(3));
 
 export interface ArchitectureDetails {
   group: THREE.Group;
@@ -43,7 +53,224 @@ interface InstanceSpec {
  * it up in a close-up. See facade-shader.ts.
  */
 function ownerSpan(building: Building): number {
-  return Math.min(building.scale[0], building.scale[2]);
+  return planSpan(building.scale[0], building.scale[2]);
+}
+
+/* ── The cap: everything above the lit core ───────────────────────────────
+ *
+ * Every piece up here used to be placed at a hardcoded fraction of the
+ * building's NOMINAL height — 0.86, 0.89, 0.66, 0.885, 0.98 — while the core
+ * beneath it was sized `totalHeight * coreRatio`. Two different height bases.
+ * That was survivable while `coreRatio` was a per-profile constant those
+ * fractions had been fitted against (0.76 / 0.82 / 0.52), but Stage 2 made it
+ * a continuous taper running 1.0 down to 0.55 and did not refit them. The core
+ * of a tall tower now stops at 0.55 of its height while its crown still starts
+ * at 0.80, so EVERY tower rendered its top floating in mid-air, 15-25% of the
+ * building's height clear of the body — up to 18 world units of nothing.
+ *
+ * Refitting the fractions would fix today's numbers and rot again the next
+ * time the height curve moves. So the fractions are gone. A piece is placed
+ * from the core's ACTUAL rendered top, and the pieces tile the space up to the
+ * declared height contiguously. Two things then hold by construction rather
+ * than by tuning:
+ *
+ *   - the rendered top always equals `totalHeight`, whatever `coreRatio` does
+ *     later — which also makes `rooftops.ts` and the camera's framing correct
+ *     for free, since both already measure to `totalHeight`;
+ *   - no piece is ever wider than the piece beneath it, so a wide parapet can
+ *     never jut out of a narrow tower's waist. That was the second half of the
+ *     "inverted layers" reading: the ledge is emitted at the core top, and the
+ *     crown used to start BELOW it.
+ */
+
+/** A single mass stacked above the core, in world Y. */
+export interface CapPiece {
+  kind: 'podium' | 'ledge' | 'crown' | 'spire';
+  bottom: number;
+  top: number;
+  /** Multiple of the core's footprint. Only the brim may exceed 1. */
+  widthScale: number;
+  /** 0 = no lit roof edge; otherwise the strip's brightness. */
+  stripIntensity: number;
+}
+
+export interface CapPlan {
+  /** Ground level of the building. */
+  baseY: number;
+  /** Top of the lit core — where the cap must start. */
+  coreTop: number;
+  /** Declared top. The cap's highest piece lands exactly here. */
+  apex: number;
+  /** `apex - coreTop`: the vertical space the cap has to fill. */
+  budget: number;
+  /** Ordered bottom-up. Ground pieces first, then the cap. */
+  pieces: CapPiece[];
+  /** Top of the highest non-spire piece — where a rooftop mast belongs. */
+  roofY: number;
+}
+
+/**
+ * How far each piece reaches down into the one below it, in world units.
+ *
+ * Small enough never to read at any framing, large enough to survive Float32
+ * instance matrices at large world coordinates, where the relative epsilon at
+ * ±500 units is ~6e-5. A seam cannot open even if a share rounds badly.
+ */
+const CAP_OVERLAP = 0.05;
+/** Or this share of the piece's own height, whichever is larger. */
+const CAP_OVERLAP_FRACTION = 0.06;
+
+/** Share of the cap budget spent on the parapet that caps the core. */
+const BRIM_SHARE = 0.22;
+/** ...but a parapet is trim, not a storey. */
+const BRIM_MAX_HEIGHT = 0.18;
+
+const SPIRE_WIDTH_RATIO = 0.06;
+/** So a spire is never sub-pixel on a small building. */
+const SPIRE_MIN_WIDTH = 0.16;
+/**
+ * ...and never a lollipop on a stick. The old floor was absolute, so on a
+ * 0.02-unit-wide building the spire came out eight times wider than the tower
+ * carrying it.
+ */
+const SPIRE_MAX_RATIO = 0.35;
+
+/**
+ * How many stacked crowns a size band can carry, and whether it may end in a
+ * mast.
+ *
+ * The size band decides how much room there is; the TYPOLOGY decides what to
+ * do with it. Keeping those separate is what stops the city being four shapes:
+ * a `tower` in one district steps back twice under a mast, and a `tower` in
+ * the district next door is a slab, without either of them being wrong about
+ * how big its file is.
+ */
+const BAND_MAX_STEPS: Record<Building['profile'], number> = {
+  block: 1, setback: 2, tower: 3, mega: 3, depot: 0,
+};
+const BAND_ALLOWS_MAST: Record<Building['profile'], boolean> = {
+  block: false, setback: false, tower: true, mega: true, depot: false,
+};
+
+/** Share of the post-brim budget a mast takes before the crowns divide it. */
+const MAST_SHARE = 0.28;
+
+/** Width of the parapet that caps the core, per profile. */
+const BRIM_WIDTH: Record<Building['profile'], number> = {
+  block: 1.05, setback: 1.04, tower: 1.04, mega: 1.05, depot: 1.06,
+};
+/** Brightness of the parapet's own lit edge. */
+const BRIM_STRIP: Record<Building['profile'], number> = {
+  block: 0.5, setback: 0.78, tower: 0.78, mega: 0.78, depot: 1.0,
+};
+
+/**
+ * Height weights for a stack of `steps` crowns, tallest at the bottom.
+ *
+ * Equal steps read as a wedding cake; a descending series reads as a building
+ * that is setting back as it rises, which is the shape the profile names have
+ * always promised.
+ */
+function crownWeights(steps: number): number[] {
+  return Array.from({ length: steps }, (_, i) => steps - i);
+}
+
+/**
+ * Lay out everything above the core for one building.
+ *
+ * Pure: no THREE, no randomness, no I/O — so the vertical contract can be
+ * asserted directly instead of through an InstancedMesh. Same reasoning as
+ * `brightness-probe.ts`: the defect lived in geometry that could not be
+ * inspected without a GPU, so it was never inspected.
+ */
+export function planCap(building: Building): CapPlan {
+  const baseY = building.position[1] - building.scale[1] / 2;
+  const coreTop = baseY + building.scale[1];
+  const apex = baseY + building.totalHeight;
+  const budget = Math.max(0, apex - coreTop);
+  const pieces: CapPiece[] = [];
+
+  /* Ground masses sit on the floor, not in the budget. */
+  if (building.profile === 'mega') {
+    pieces.push({ kind: 'podium', bottom: baseY, top: baseY + 0.4, widthScale: 1.12, stripIntensity: 0 });
+  } else if (building.profile === 'depot') {
+    pieces.push({ kind: 'podium', bottom: baseY, top: baseY + 0.24, widthScale: 1.06, stripIntensity: 0 });
+  }
+
+  if (budget <= 0) {
+    return { baseY, coreTop, apex, budget, pieces, roofY: coreTop };
+  }
+
+  const narrow = Math.min(building.scale[0], building.scale[2]);
+  const typology = building.typology;
+  const steps = Math.min(typology.steps, BAND_MAX_STEPS[building.profile]);
+  const mast = typology.mast && BAND_ALLOWS_MAST[building.profile] && steps > 0;
+
+  /*
+   * A depot's parapet IS its whole cap — no crown, no spire; it is meant to
+   * read as ground rather than architecture. This is also the one profile
+   * whose geometry was already correct, so it must come out unchanged.
+   */
+  const brimHeight = steps === 0
+    ? budget
+    : Math.min(BRIM_MAX_HEIGHT, budget * BRIM_SHARE);
+
+  let cursor = coreTop;
+  let previousWidth = Infinity;
+  const push = (
+    height: number, widthScale: number, kind: CapPiece['kind'], stripIntensity: number,
+  ): void => {
+    const capped = Math.min(widthScale, previousWidth);
+    const overlap = Math.max(CAP_OVERLAP, height * CAP_OVERLAP_FRACTION);
+    pieces.push({
+      kind,
+      // Reaching down into the piece below is what makes a gap impossible.
+      bottom: Math.max(baseY, cursor - overlap),
+      top: cursor + height,
+      widthScale: capped,
+      stripIntensity,
+    });
+    previousWidth = capped;
+    cursor += height;
+  };
+
+  push(brimHeight, BRIM_WIDTH[building.profile], 'ledge', BRIM_STRIP[building.profile]);
+
+  /*
+   * The mast is paid for first so the crowns divide only what is left; then
+   * the LAST piece emitted takes whatever remains, so rounding can never leave
+   * a sliver of unfilled height between the top crown and the declared apex.
+   */
+  const afterBrim = apex - cursor;
+  const mastHeight = mast ? afterBrim * MAST_SHARE : 0;
+  const crownTop = apex - mastHeight;
+  const weights = crownWeights(steps);
+  const weightTotal = weights.reduce((sum, w) => sum + w, 0);
+  const crownBudget = crownTop - cursor;
+
+  for (let i = 0; i < steps; i++) {
+    const last = i === steps - 1;
+    const height = last ? crownTop - cursor : (crownBudget * weights[i]) / weightTotal;
+    // Each step keeps `narrowing` of the one below it, so the silhouette
+    // tapers by the district's own character rather than a fixed table.
+    const widthScale = Math.pow(typology.narrowing, i + 1);
+    // Only the topmost crown is outlined; lighting every setback reads busy.
+    push(height, widthScale, 'crown', last ? 0.78 : 0);
+  }
+
+  if (mast) {
+    const widthScale = Math.min(
+      SPIRE_MAX_RATIO,
+      Math.max(SPIRE_WIDTH_RATIO, SPIRE_MIN_WIDTH / Math.max(narrow, 1e-6)),
+    );
+    push(apex - cursor, widthScale, 'spire', 0);
+  }
+
+  let roofY = coreTop;
+  for (const piece of pieces) {
+    if (piece.kind !== 'spire' && piece.top > roofY) roofY = piece.top;
+  }
+  return { baseY, coreTop, apex, budget, pieces, roofY };
 }
 
 interface StripSpec extends InstanceSpec {
@@ -66,50 +293,35 @@ export function buildArchitectureDetails(buildings: Building[]): ArchitectureDet
   const strips: StripSpec[] = [];
   const maskUpdaters: ((mask: Uint8Array) => void)[] = [];
 
+  /*
+   * One path for every profile. `planCap` decides the vertical layout; this
+   * loop only turns each piece into an instance and routes it to the mesh that
+   * owns its material. A profile can no longer place a piece by hand, which is
+   * how the crowns drifted off their cores in the first place.
+   */
   for (let ownerId = 0; ownerId < buildings.length; ownerId++) {
     const b = buildings[ownerId];
-    const total = b.totalHeight;
-    const baseY = b.position[1] - b.scale[1] / 2;
     const w = b.scale[0];
     const d = b.scale[2];
 
-    if (b.profile === 'setback') {
-      const y = baseY + b.scale[1];
-      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
-      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.86, z: b.position[2], sx: w * 0.62, sy: total * 0.28, sz: d * 0.62 });
-      addStrips(strips, b, ownerId, baseY + total * 0.86, w * 0.62, d * 0.62);
-    } else if (b.profile === 'tower') {
-      const y = baseY + b.scale[1];
-      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.04, sy: 0.18, sz: d * 1.04 });
-      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.89, z: b.position[2], sx: w * 0.42, sy: total * 0.18, sz: d * 0.42 });
-      addStrips(strips, b, ownerId, baseY + total * 0.89, w * 0.42, d * 0.42);
-      spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.98, z: b.position[2], sx: Math.max(w * 0.06, 0.16), sy: total * 0.14, sz: Math.max(d * 0.06, 0.16) });
-    } else if (b.profile === 'mega') {
-      podiums.push({ ownerId, x: b.position[0], y: baseY + 0.20, z: b.position[2], sx: w * 1.12, sy: 0.40, sz: d * 1.12 });
-      ledges.push({ ownerId, x: b.position[0], y: baseY + b.scale[1], z: b.position[2], sx: w * 1.05, sy: 0.22, sz: d * 1.05 });
-      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.66, z: b.position[2], sx: w * 0.68, sy: total * 0.28, sz: d * 0.68 });
-      addStrips(strips, b, ownerId, baseY + total * 0.66, w * 0.68, d * 0.68);
-      crowns.push({ ownerId, x: b.position[0], y: baseY + total * 0.885, z: b.position[2], sx: w * 0.44, sy: total * 0.19, sz: d * 0.44 });
-      addStrips(strips, b, ownerId, baseY + total * 0.885, w * 0.44, d * 0.44);
-      spires.push({ ownerId, x: b.position[0], y: baseY + total * 0.97, z: b.position[2], sx: Math.max(w * 0.055, 0.18), sy: total * 0.10, sz: Math.max(d * 0.055, 0.18) });
-    } else if (b.profile === 'block') {
-      /*
-       * The lower 40% of the source city. It had no detail geometry at all,
-       * so the bottom of every skyline was bare boxes while the band directly
-       * above it sprouted ledges, crowns and light strips — a visible seam
-       * exactly where the profile changed. A parapet and a lit roof edge are
-       * enough to give the mass a top without competing with the landmarks,
-       * which keep the crowns and spires to themselves.
-       */
-      const y = baseY + b.scale[1];
-      ledges.push({ ownerId, x: b.position[0], y, z: b.position[2], sx: w * 1.05, sy: 0.16, sz: d * 1.05 });
-      addStrips(strips, b, ownerId, y, w, d, 0.5);
-    } else if (b.profile === 'depot') {
-      // Non-source bulk: a loading apron, a heavy parapet, and a bright
-      // roof edge. No crown, no spire — nothing that reads as a landmark.
-      podiums.push({ ownerId, x: b.position[0], y: baseY + 0.12, z: b.position[2], sx: w * 1.06, sy: 0.24, sz: d * 1.06 });
-      ledges.push({ ownerId, x: b.position[0], y: baseY + total * 0.94, z: b.position[2], sx: w * 1.06, sy: total * 0.12, sz: d * 1.06 });
-      addStrips(strips, b, ownerId, baseY + total, w * 1.02, d * 1.02, 1.0);
+    for (const piece of planCap(b).pieces) {
+      const spec: InstanceSpec = {
+        ownerId,
+        x: b.position[0],
+        y: (piece.bottom + piece.top) / 2,
+        z: b.position[2],
+        sx: w * piece.widthScale,
+        sy: piece.top - piece.bottom,
+        sz: d * piece.widthScale,
+      };
+      if (piece.kind === 'podium') podiums.push(spec);
+      else if (piece.kind === 'ledge') ledges.push(spec);
+      else if (piece.kind === 'crown') crowns.push(spec);
+      else spires.push(spec);
+
+      if (piece.stripIntensity > 0) {
+        addStrips(strips, b, ownerId, piece.top, spec.sx, spec.sz, piece.stripIntensity);
+      }
     }
   }
 
@@ -326,14 +538,19 @@ ${FACADE_GLSL}`)
           float sideMask = 1.0 - step(0.5, abs(crownN.y));
           float yCell;
           float seed;
-          float windows = rcWindowGrid(vCrownWorld, crownN, vOwnerId * 0.37, 0.0, assist, yCell, seed) * sideMask;
+          float windows = rcWindowGrid(vCrownWorld, crownN, vOwnerId * 0.37, assist, yCell, seed) * sideMask;
           float rim = rcEdgeBand(vCrownLocal.y, 0.435, 0.5, 1.1, assist) * sideMask;
           float activeBoost = step(abs(vOwnerId - uCrownHover), 0.5) * 0.25 + step(abs(vOwnerId - uCrownSelected), 0.5) * 0.55;
           float pulse = 0.92 + sin(uCrownTime * 4.0 + vOwnerId * 0.23) * 0.08;
           /* Crowns sit at the top of the silhouette, so they carry most of a
              distant skyline: same energy-conserving gain as the cores. */
           float facade = assist * (sideMask * 0.10 + smoothstep(0.5, 0.8, crownN.y) * 0.08);
-          vec3 glow = vCrownColor * (windows * 1.9 * rcDistantGain(assist) + rim * 0.7 * rcDistantEdgeGain(assist) + facade)
+          /* Crowns are coloured by the raw language colour, whose luminance
+             spans the same 1.56x the facades' did — and they sit at the top
+             of the silhouette, so an unnormalised crown is the most visible
+             place for a magenta language to read dimmer than a cyan one. */
+          vec3 crownColor = rcNormalizeLuma(vCrownColor);
+          vec3 glow = crownColor * (windows * ${glslFloat(CROWN_WINDOW_EMISSIVE)} * rcDistantGain(assist) + rim * 0.7 * rcDistantEdgeGain(assist) + facade)
             * (1.0 + activeBoost) * pulse;
           totalEmissiveRadiance += glow;
           rcCrownGlowKey = clamp(dot(glow, vec3(0.45)), 0.0, 1.0);
@@ -341,7 +558,7 @@ ${FACADE_GLSL}`)
         }`)
       .replace('#include <fog_fragment>', fogFragmentGLSL('vCrownWorld', 'rcCrownAssistKey', 'rcCrownGlowKey'));
   };
-  material.customProgramCacheKey = () => 'repocity-crowns-v3';
+  material.customProgramCacheKey = () => 'repocity-crowns-v6';
   return material;
 }
 
@@ -354,8 +571,12 @@ function addSpires(
   maskUpdaters: ((mask: Uint8Array) => void)[],
 ): void {
   if (specs.length === 0) return;
+  /*
+   * Centre-origin, like every other detail geometry. It used to be translated
+   * to base-origin while being placed with a centre `y`, so a spire sat half
+   * its own length too high and overshot the building's declared top by 12%.
+   */
   const geometry = new THREE.CylinderGeometry(0.5, 0.9, 1, 6);
-  geometry.translate(0, 0.5, 0);
   attachOwnerSpans(geometry, specs, buildings);
   const mesh = new THREE.InstancedMesh(geometry, material, specs.length);
   const dummy = new THREE.Object3D();
@@ -374,23 +595,35 @@ function addSpires(
   maskUpdaters.push((mask) => updateMatrices(mesh, specs, mask));
 }
 
+/**
+ * A lit outline around a roof edge.
+ *
+ * `roofY` is the ROOF PLANE, not a mass's centre. It used to be called with
+ * the crown's centre for three of the five profiles and with the roof for the
+ * other two — the same argument meaning two different things — so on a tall
+ * tower the strip that is meant to trace the roofline sat several units down
+ * the crown's flank instead.
+ */
 function addStrips(
   target: StripSpec[],
   b: Building,
   ownerId: number,
-  y: number,
+  roofY: number,
   width: number,
   depth: number,
   intensity = 0.78,
 ): void {
-  const color: [number, number, number] = [b.color[0] * intensity, b.color[1] * intensity, b.color[2] * intensity];
+  // Normalised like every other language-coloured surface: two strips of the
+  // same width on neighbouring roofs should differ in hue, not in brightness.
+  const level = normalizeLuma(b.color);
+  const color: [number, number, number] = [level[0] * intensity, level[1] * intensity, level[2] * intensity];
   const z = depth / 2 + 0.025;
   const x = width / 2 + 0.025;
   target.push(
-    { ownerId, x: b.position[0], y, z: b.position[2] - z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
-    { ownerId, x: b.position[0], y, z: b.position[2] + z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
-    { ownerId, x: b.position[0] - x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
-    { ownerId, x: b.position[0] + x, y, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+    { ownerId, x: b.position[0], y: roofY, z: b.position[2] - z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { ownerId, x: b.position[0], y: roofY, z: b.position[2] + z, sx: width * 0.78, sy: 0.075, sz: 0.035, color },
+    { ownerId, x: b.position[0] - x, y: roofY, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
+    { ownerId, x: b.position[0] + x, y: roofY, z: b.position[2], sx: 0.035, sy: 0.075, sz: depth * 0.78, color },
   );
 }
 

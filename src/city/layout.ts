@@ -5,6 +5,8 @@
  * is proportional to file size and aspect ratios stay close to 1:1.
  */
 
+import { classifyBuilding, detectLanguage } from './file-class';
+
 /** Options controlling the treemap layout. */
 export interface LayoutOptions {
   /** Canvas width in pixels (default: 200). */
@@ -65,6 +67,32 @@ const DEFAULT_OPTIONS: NormalizedOptions = {
   depthScale: 0.3,
 };
 
+/**
+ * How much ground a repository of this many files gets, in world units.
+ *
+ * The `sqrt` is the load-bearing part: land area grows in proportion to the
+ * file count, so the plot a file receives — and therefore how wide its
+ * building is against a height range that does not change — stays constant
+ * however large the repository is.
+ *
+ * The cap is a deliberate departure from that, and it is a COMPOSITION
+ * decision rather than an oversight.
+ *
+ * Both alternatives were built and rendered against real repositories. Letting
+ * land grow freely does give perfectly constant building proportions — median
+ * height-to-width holds at about 1.7:1 from 13 files to 5,000 — and it looks
+ * markedly worse: a 5,000-file city covers four times the ground with no extra
+ * height, so the camera pulls back to fit it and the skyline reads as a
+ * distant pancake of cubes. Raising the cap to 560 as a halfway position was
+ * no better. DENSITY is what makes the picture read as a city, and density is
+ * what the cap preserves.
+ *
+ * The proportion problem the cap causes is real, and it is addressed where it
+ * belongs instead: plot area is now depth-independent and the gutter decays
+ * with depth, which widens the median plot substantially at a fixed land size.
+ * What is left is a framing question — a large city should be viewed from
+ * within rather than fitted entirely on screen — and that is camera work.
+ */
 export function repositoryLandSize(renderedFileCount: number): number {
   const count = Math.max(1, Math.floor(renderedFileCount));
   return Math.min(240, Math.max(32, Math.round((16 + 14 * Math.sqrt(count)) * 2) / 2));
@@ -89,22 +117,32 @@ export function buildLayout(
   const opts = applyDefaults(options);
   const cells: LayoutCell[] = [];
 
+  // Once for the whole tree: recursing per level would be O(n * depth).
+  const weights = computeWeights(root);
+
   // Treat the root as the container; layout its children.
   const rect: WorkRect = { x: 0, y: 0, w: opts.width, h: opts.height };
-  const items = root.children.map(weigh).sort(byWeightDescending);
+  const items = root.children.map((node) => weigh(node, weights)).sort(byWeightDescending);
 
-  squarify(items, rect, 0, cells, opts);
+  squarify(items, rect, 0, cells, opts, weights);
   return cells;
 }
 
 /**
- * Most of an axis a cell may lose to its gutter.
+ * Most of an axis a cell may lose to its gutter, at the top of the tree.
  *
- * The cap is what stops the depth-scaled gutter from starving deeply nested
- * files: a cell always keeps at least three quarters of each axis, however far
- * down the tree it sits.
+ * The cap is charged once per ANCESTOR, so a flat value compounds: at 0.25 a
+ * cell three levels down keeps 0.75^6 = 18% of its area, and 77% of all
+ * placements were hitting the cap on both axes. Deleting the gutter is not the
+ * answer — the gaps are what read as streets — but charging an arterial's
+ * width between two sibling files is.
+ *
+ * Decaying it geometrically makes the total charge convergent and gives the
+ * city the street hierarchy it should have had all along: a wide gap between
+ * top-level districts, a narrow one between files in the same folder.
  */
-const MAX_GUTTER_FRACTION = 0.25;
+const MAX_GUTTER_FRACTION = 0.22;
+const GUTTER_DEPTH_DECAY = 0.55;
 
 /**
  * A node paired with the area weight the treemap should give it.
@@ -136,11 +174,91 @@ interface WeightedItem {
 const AREA_EXPONENT = 0.55;
 
 /**
- * Weight a node for layout: sizes are floored at 1 so empty files still occupy
- * a visible sliver, then compressed by {@link AREA_EXPONENT}.
+ * Non-source bulk is compressed harder than source.
+ *
+ * Lockfiles, minified bundles, fixtures and media are ground rather than
+ * architecture — they render as low, wide depots on purpose. But their plots
+ * are byte-proportional, and generated files are enormous, so in react the
+ * `fixtures/` lockfile district alone claimed roughly a third of the map: a
+ * flat plateau taking up more of the city than all of `packages/`. Compressing
+ * their area more aggressively keeps the metaphor (a big lockfile is still a
+ * big depot) while stopping it dominating the picture.
  */
-function weigh(node: TreeNode): WeightedItem {
-  return { node, weight: Math.pow(Math.max(node.size, 1), AREA_EXPONENT) };
+const INFRA_AREA_EXPONENT = 0.4;
+
+/**
+ * Ceiling on the share of the map non-source files may occupy in total.
+ *
+ * The exponent alone is not enough for a repository that is mostly generated
+ * bulk. This is a backstop on the aggregate, applied before directory weights
+ * are summed so the whole tree stays consistent with it.
+ */
+const MAX_INFRA_SHARE = 0.15;
+
+/**
+ * Area weight for every node in the tree, computed once.
+ *
+ * A LEAF is compressed by its category's exponent. A DIRECTORY is the SUM of
+ * its children's weights — NOT `(its own bytes)^AREA_EXPONENT`.
+ *
+ * That distinction is the whole point. Because `x^0.55` is sub-additive,
+ * `(Σs)^0.55 < Σ(s^0.55)`, so charging the exponent again at every directory
+ * level meant a folder always received less area than its contents claimed,
+ * compounding once per level of nesting. Measured on a realistic tree: two
+ * IDENTICAL 3 KB files six levels apart differed in plot area by 2,484x, while
+ * the entire byte range of the repository only spans about 175x. Tree depth
+ * outweighed file size by an order of magnitude — the precise opposite of what
+ * the City Index promises a reader.
+ *
+ * Applying the compression once, at the leaves, makes a file's share of the
+ * land exactly its share of the total leaf weight, wherever it sits.
+ */
+function computeWeights(root: TreeNode): Map<TreeNode, number> {
+  const weights = new Map<TreeNode, number>();
+  const infrastructure: TreeNode[] = [];
+  let sourceTotal = 0;
+  let infraTotal = 0;
+
+  const weighLeaves = (node: TreeNode): void => {
+    if (node.type !== 'file') {
+      for (const child of node.children) weighLeaves(child);
+      return;
+    }
+    const language = node.language ?? detectLanguage(node.name);
+    const infra = classifyBuilding(node.path, language, node.size) === 'infrastructure';
+    const weight = Math.pow(Math.max(node.size, 1), infra ? INFRA_AREA_EXPONENT : AREA_EXPONENT);
+    weights.set(node, weight);
+    if (infra) {
+      infrastructure.push(node);
+      infraTotal += weight;
+    } else {
+      sourceTotal += weight;
+    }
+  };
+  weighLeaves(root);
+
+  // Solve for the scale that lands infrastructure exactly on its ceiling:
+  // target / (source + target) = MAX  =>  target = MAX * source / (1 - MAX).
+  if (infraTotal > 0 && infraTotal / (sourceTotal + infraTotal) > MAX_INFRA_SHARE) {
+    const target = (MAX_INFRA_SHARE * sourceTotal) / (1 - MAX_INFRA_SHARE);
+    const scale = target / infraTotal;
+    for (const leaf of infrastructure) weights.set(leaf, (weights.get(leaf) ?? 0) * scale);
+  }
+
+  const sumUp = (node: TreeNode): number => {
+    if (node.type === 'file') return weights.get(node) ?? 0;
+    let total = 0;
+    for (const child of node.children) total += sumUp(child);
+    weights.set(node, total);
+    return total;
+  };
+  sumUp(root);
+  return weights;
+}
+
+/** Pair a node with its precomputed weight. */
+function weigh(node: TreeNode, weights: Map<TreeNode, number>): WeightedItem {
+  return { node, weight: weights.get(node) ?? 0 };
 }
 
 /** Descending by weight — the order squarify expects. */
@@ -173,10 +291,11 @@ function squarify(
   depth: number,
   cells: LayoutCell[],
   options: NormalizedOptions,
+  weights: Map<TreeNode, number>,
 ): void {
   if (items.length === 0) return;
 
-  const totalSize = sumSizes(items);
+  const totalSize = sumWeights(items);
   if (totalSize === 0) return;
 
   // Build a row greedily
@@ -246,8 +365,9 @@ function squarify(
      * altogether by the `> 0` guard below.
      */
     const requested = options.padding + options.depthScale * depth;
-    const padX = Math.min(requested, itemRect.w * MAX_GUTTER_FRACTION);
-    const padY = Math.min(requested, itemRect.h * MAX_GUTTER_FRACTION);
+    const fraction = MAX_GUTTER_FRACTION * Math.pow(GUTTER_DEPTH_DECAY, depth);
+    const padX = Math.min(requested, itemRect.w * fraction);
+    const padY = Math.min(requested, itemRect.h * fraction);
     const paddedRect: LayoutRect = {
       x: itemRect.x + padX / 2,
       y: itemRect.y + padY / 2,
@@ -262,8 +382,10 @@ function squarify(
       }
     } else {
       // Recurse into directory
-      const childItems = item.node.children.map(weigh).sort(byWeightDescending);
-      squarify(childItems, paddedRect, depth + 1, cells, options);
+      const childItems = item.node.children
+        .map((node) => weigh(node, weights))
+        .sort(byWeightDescending);
+      squarify(childItems, paddedRect, depth + 1, cells, options, weights);
     }
 
     offset += itemLength;
@@ -287,7 +409,7 @@ function squarify(
         h: rect.h,
       };
     }
-    squarify(remaining, newRect, depth, cells, options);
+    squarify(remaining, newRect, depth, cells, options, weights);
   }
 }
 
@@ -306,7 +428,7 @@ function worstAspect(
   totalArea: number,
   rect: WorkRect,
 ): number {
-  const rowArea = sumSizes(row);
+  const rowArea = sumWeights(row);
   const isHorizontal = rect.w <= rect.h;
   const otherSide = isHorizontal ? rect.w : rect.h;
   const thickness = (rowArea / totalArea) * (isHorizontal ? rect.h : rect.w);
@@ -327,10 +449,8 @@ function worstAspect(
   return worst;
 }
 
-/**
- * Sum the sizes of an array of tree nodes.
- */
-function sumSizes(items: WeightedItem[]): number {
+/** Sum the layout weights of a row. */
+function sumWeights(items: WeightedItem[]): number {
   let total = 0;
   for (const item of items) {
     total += item.weight;

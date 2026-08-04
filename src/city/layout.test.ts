@@ -2,11 +2,31 @@ import { describe, expect, it } from 'vitest';
 import { buildLayout, repositoryLandSize, type TreeNode } from './layout';
 
 describe('repository land sizing', () => {
-  it('grows deterministically with rendered file count and remains bounded', () => {
+  it('grows deterministically with rendered file count', () => {
     expect(repositoryLandSize(1)).toBe(32);
     expect(repositoryLandSize(10)).toBe(60.5);
     expect(repositoryLandSize(67)).toBe(130.5);
     expect(repositoryLandSize(5000)).toBe(240);
+  });
+
+  /*
+   * The property the pinned numbers above are standing in for.
+   *
+   * Land AREA grows in proportion to the file count, so a file's plot — and
+   * therefore its building's proportions against a fixed height range — does
+   * not depend on how large the repository is. Past the cap it stops, which is
+   * a deliberate composition choice documented on `repositoryLandSize`: an
+   * uncapped city covers so much ground that the camera must pull back and the
+   * skyline flattens. Both were rendered before choosing. So assert the
+   * property over the range where proportion is what matters, and assert that
+   * the cap really does bind past it.
+   */
+  it('keeps the ground per file constant until the cap binds', () => {
+    const areaPerFile = (files: number): number => repositoryLandSize(files) ** 2 / files;
+    const samples = [40, 120, 250].map(areaPerFile);
+    expect(Math.max(...samples) / Math.min(...samples)).toBeLessThan(1.3);
+    expect(repositoryLandSize(2500)).toBe(240);
+    expect(repositoryLandSize(20_000)).toBe(240);
   });
 
   function twoFileRoot(smaller: number, larger: number): TreeNode {

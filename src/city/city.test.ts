@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LayoutCell } from './layout';
 import { buildCity, tallestSourceBuilding } from './city';
 import { classifyBuilding, isCodeLanguage } from './file-class';
+import { ALL_TYPOLOGIES } from './typology';
 
 function sourceCells(count: number, rect?: { w: number; h: number }): LayoutCell[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -46,14 +47,29 @@ describe('repository-relative skyline', () => {
     /* the tallest handful are still marked as landmarks for their detailing */
     expect(city.buildings.filter((building) => building.profile === 'mega')).toHaveLength(1);
     /*
-     * A building fills its plot on both axes. This replaced an absolute
-     * 12-unit span cap, which was applied isotropically but triggered on the
-     * longer axis, so a wide-shallow parcel produced a needle stranded in bare
-     * ground. What matters is the relationship to the plot, not the number.
+     * A building fills its plot along the LONG axis, and its typology decides
+     * how much of the short axis it takes.
+     *
+     * This used to require an exact 0.9 on both axes. That was a faithful
+     * description of the rule at the time and it was the rule that was wrong:
+     * `squarify` drives plots toward an aspect ratio near 1, so filling both
+     * axes made every building in the city a near-square box, and the city
+     * read as a stamped compound rather than a skyline. A slab now stands
+     * along its plot's long axis and leaves the slack beside it as a street.
+     * What is still guaranteed is that no building escapes its own plot.
      */
+    const minPlanFill = Math.min(...ALL_TYPOLOGIES.map((t) => t.planFill));
     for (const building of city.buildings) {
-      expect(building.scale[0] / building.parcel[0]).toBeCloseTo(0.9, 5);
-      expect(building.scale[2] / building.parcel[1]).toBeCloseTo(0.9, 5);
+      const fillX = building.scale[0] / building.parcel[0];
+      const fillZ = building.scale[2] / building.parcel[1];
+      const long = Math.max(fillX, fillZ);
+      const short = Math.min(fillX, fillZ);
+      expect(long).toBeCloseTo(0.9, 5);
+      expect(short).toBeLessThanOrEqual(0.9 + 1e-9);
+      expect(short).toBeGreaterThanOrEqual(0.9 * minPlanFill - 1e-9);
+      // Never wider than the ground it was allocated.
+      expect(building.scale[0]).toBeLessThanOrEqual(building.parcel[0]);
+      expect(building.scale[2]).toBeLessThanOrEqual(building.parcel[1]);
     }
     city.dispose();
   });

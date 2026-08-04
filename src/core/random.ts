@@ -2,7 +2,15 @@ export type RandomSource = () => number;
 
 const SCENE_RANDOM_VERSION = 'repocity-scene-v1';
 
-function hashString(value: string): number {
+/**
+ * FNV-1a over a string, as a 32-bit unsigned integer.
+ *
+ * Exported so that anything needing a stable choice keyed by a name — which
+ * district a building belongs to, which typology that district uses — draws it
+ * from the same place the seeded scene streams do, instead of growing another
+ * ad-hoc hash beside them.
+ */
+export function hashString(value: string): number {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index++) {
     hash ^= value.charCodeAt(index);

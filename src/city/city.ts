@@ -9,7 +9,7 @@
  *    three's, so the fog replacement in facade-shader.ts recomputes depth
  *    from the public `cameraPosition` uniform instead).
  *  - All custom data flows through OUR OWN attributes/varyings:
- *      aId, aTint, aLit, aBase, aKind, aSpan  →  vId, vTint, vLit, vBase,
+ *      aId, aTint, aBase, aKind, aSpan  →  vId, vTint, vBase,
  *                                    vKind, vSpan, vWP, vLP, vN
  *  - The window grid itself lives in facade-shader.ts; crowns include the
  *    same chunk so the two can no longer drift apart.
@@ -27,8 +27,12 @@ import { languageColor, languageEmissiveBoost } from './palette';
 import type { LayoutCell } from './layout';
 import { buildArchitectureDetails } from './architecture-details';
 import type { ArchitectureDetails } from './architecture-details';
-import { classifyBuilding, isCodeLanguage, type BuildingCategory } from './file-class';
-import { FACADE_GLSL, fogFragmentGLSL } from './facade-shader';
+import { classifyBuilding, detectLanguage, isCodeLanguage, type BuildingCategory } from './file-class';
+import { BLOCK_TYPOLOGY, districtKeyOf, typologyFor, type Typology } from './typology';
+import {
+  FACADE_GLSL, fogFragmentGLSL, glslFloat as f,
+  FLOOR_SHIFT_RANGE, planSpan, RIM_BRIGHT, WINDOW_EMISSIVE,
+} from './facade-shader';
 
 export interface Building {
   position: [number, number, number];
@@ -42,6 +46,12 @@ export interface Building {
   profile: 'block' | 'setback' | 'tower' | 'mega' | 'depot';
   /** `'source'` competes for the skyline; `'infrastructure'` is capped low. */
   category: BuildingCategory;
+  /**
+   * What kind of building this is, inherited from its directory so a folder's
+   * files read as one neighbourhood. Size decides how big; this decides what
+   * shape. See typology.ts.
+   */
+  typology: Typology;
 }
 
 export interface CityData {
@@ -108,14 +118,12 @@ export function tallestSourceBuilding(buildings: readonly Building[]): Building 
 const VERT_DECL = /* glsl */ `
 attribute float aId;
 attribute float aTint;
-attribute float aLit;
 attribute vec3 aBase;
 attribute float aMatch;
 attribute float aKind;
 attribute float aSpan;
 varying float vId;
 varying float vTint;
-varying float vLit;
 varying vec3 vBase;
 varying float vMatch;
 varying float vKind;
@@ -133,7 +141,6 @@ const VERT_ASSIGN = /* glsl */ `
   vN = normalize( mat3( modelMatrix ) * mat3( instanceMatrix ) * objectNormal );
   vId = aId;
   vTint = aTint;
-  vLit = aLit;
   vBase = aBase;
   vMatch = aMatch;
   vKind = aKind;
@@ -147,7 +154,6 @@ const VERT_ASSIGN = /* glsl */ `
 const FRAG_DECL = /* glsl */ `
 varying float vId;
 varying float vTint;
-varying float vLit;
 varying vec3 vBase;
 varying float vMatch;
 varying float vKind;
@@ -181,37 +187,35 @@ const FRAG_EMISSIVE = /* glsl */ `
   /* ---- window grid (world-space => consistent floor heights) ---- */
   float yCell;
   float seed;
-  float grid = rcWindowGrid( vWP, N, abs( N.x ) * 31.7, vLit, assist, yCell, seed );
+  float grid = rcWindowGrid( vWP, N, abs( N.x ) * 31.7, assist, yCell, seed );
 
   float flickRoll = rcHash( seed + 13.7 );
   float flickOn = step( 0.90, flickRoll );
   float flick = sin( uTime * 3.6 + flickRoll * 40.0 ) * 0.45 + 0.65;
   /* Flicker is per-cell, so it becomes temporal noise once cells are
      sub-pixel — fade it out with everything else that aliases. */
-  float winBright = mix( mix( 1.0, flick, flickOn ), 1.0, assist ) * mix( 1.0, 1.45, vLit );
+  float winBright = mix( mix( 1.0, flick, flickOn ), 1.0, assist );
 
   float windowShape = grid * sideMask * winBright;
 
   /* ---- window colour: cyan↔magenta↔amber via language tint ---- */
-  float floorShift = rcHash( yCell * 3.17 + vId * 0.31 ) * 0.22 * ( 1.0 - assist );
-  float et = clamp( vTint + floorShift - 0.10, 0.0, 1.0 );
-  vec3 coolC = vec3( 0.06, 0.62, 0.82 );
-  vec3 magC  = vec3( 0.82, 0.12, 0.46 );
-  vec3 warmC = vec3( 0.82, 0.46, 0.14 );
-  float t1 = clamp( et / 0.9, 0.0, 1.0 );
-  float t2 = clamp( ( et - 0.9 ) / 0.1, 0.0, 1.0 );
-  vec3 winTint = mix( mix( coolC, magC, t1 ), warmC, t2 );
-  vec3 winColor = mix( winTint, vBase + winTint * 0.5, 0.45 );
+  float floorShift = rcHash( yCell * 3.17 + vId * 0.31 ) * ${f(FLOOR_SHIFT_RANGE)} * ( 1.0 - assist );
+  float et;
+  vec3 winTint = rcWindowTint( vTint, floorShift, et );
+  vec3 winColor = rcNormalizeLuma( mix( winTint, vBase + winTint * 0.5, 0.45 ) );
 
   /* Averaging the grid conserves its energy, and that energy is far too
      little to survive tone mapping at overview distance — hence the gain.
      Depots keep a dim grid so byte-huge junk never out-glows real code. */
   float windowGain = rcDistantGain( assist ) * mix( 1.0, 0.42, depot );
-  vec3 windowGlow = winColor * windowShape * 2.0 * windowGain;
+  vec3 windowGlow = winColor * windowShape * ${f(WINDOW_EMISSIVE)} * windowGain;
 
   /* ---- facade luminance floor: distant blocks keep language colour ---- */
   float up = clamp( vLP.y + 0.5, 0.0, 1.0 );
-  vec3 facadeTint = mix( vBase, winTint, 0.45 );
+  /* Normalised for the same reason the windows are: at full assist this term
+     IS the building's silhouette, so leaving it raw would reintroduce the
+     magenta-reads-dimmer gap in the one place a distant city is read from. */
+  vec3 facadeTint = rcNormalizeLuma( mix( vBase, winTint, 0.45 ) );
   /* Depots are wide roofs seen from above: without a roof wash they read as
      black holes in a distant city, so their tops get a stronger floor. */
   float facadeAmt = assist * ( sideMask * ( 0.05 + 0.14 * up ) + topMask * mix( 0.09, 0.30, depot ) );
@@ -220,8 +224,8 @@ const FRAG_EMISSIVE = /* glsl */ `
   /* ---- neon rim on the top edge of every wall ---- */
   float rim = rcEdgeBand( vLP.y, 0.435, 0.5, 1.1, assist ) * sideMask;
   float rimPulse = sin( uTime * 2.2 + vId * 0.41 ) * 0.12 + 0.88;
-  float rimBright = mix( 0.7, 1.3, vLit );
-  vec3 rimColor = mix( vec3( 0.0, 0.68, 0.84 ), vec3( 0.86, 0.12, 0.46 ), et );
+  float rimBright = ${f(RIM_BRIGHT)};
+  vec3 rimColor = rcNormalizeLuma( mix( vec3( 0.0, 0.68, 0.84 ), vec3( 0.86, 0.12, 0.46 ), et ) );
   vec3 rimGlow = rimColor * rim * rimPulse * rimBright * 1.25 * rcDistantEdgeGain( assist );
 
   /* ---- vertical corner strips ---- */
@@ -257,29 +261,6 @@ interface BuildingUniforms {
   uSelect: { value: number };
 }
 
-function detectLang(fn: string): string {
-  const ext = fn.toLowerCase().split('.').pop() ?? '';
-  const m: Record<string, string> = {
-    js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
-    ts: 'typescript', tsx: 'typescript',
-    py: 'python', rs: 'rust', go: 'go', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
-    java: 'java', cs: 'csharp', kt: 'kotlin', swift: 'swift', dart: 'dart', scala: 'scala',
-    hs: 'haskell', fs: 'fsharp', ml: 'ocaml', clj: 'clojure', cr: 'crystal', zig: 'zig', nim: 'nim',
-    ex: 'elixir', exs: 'elixir', erl: 'erlang', lua: 'lua', r: 'r', jl: 'julia',
-    html: 'html', htm: 'html', css: 'css', scss: 'scss', sass: 'sass', less: 'less',
-    vue: 'vue', svelte: 'svelte', json: 'json', md: 'markdown', mdx: 'markdown',
-    yml: 'yaml', yaml: 'yaml', toml: 'toml', xml: 'xml', proto: 'protobuf',
-    sh: 'shell', bash: 'shell', zsh: 'shell', bat: 'shell', cmd: 'shell', ps1: 'powershell',
-    rb: 'ruby', php: 'php', pl: 'perl', lock: 'lockfile',
-    ini: 'ini', cfg: 'ini', conf: 'ini', env: 'env', txt: 'text',
-    png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', svg: 'image', webp: 'image', ico: 'image',
-    ttf: 'font', otf: 'font', woff: 'font', woff2: 'font',
-    csv: 'data', tsv: 'data', zip: 'binary', gz: 'binary', exe: 'binary', dll: 'binary', so: 'binary',
-    tf: 'terraform', nix: 'nix', sol: 'solidity', glsl: 'glsl', vert: 'glsl', frag: 'glsl', wgsl: 'wgsl',
-    graphql: 'graphql', sql: 'sql', tex: 'tex', rst: 'rst',
-  };
-  return m[ext] ?? 'unknown';
-}
 
 /** Size-then-path ordering: stable for a given repository, never random. */
 function rankOrder(cells: LayoutCell[], indices: readonly number[]): number[] {
@@ -291,17 +272,53 @@ function rankOrder(cells: LayoutCell[], indices: readonly number[]): number[] {
 
 /* ── public API ───────────────────────────────────────── */
 
-/** Shortest and tallest a source building can be, in world units. */
+/**
+ * Shortest and tallest a source building can be, in world units.
+ *
+ * Absolute, deliberately. Scaling them with the city was tried and is wrong:
+ * land area grows in proportion to the file count, so a building's PLOT is
+ * already the same size whatever the repository's size — and scaling height on
+ * top of that makes tall buildings get slimmer as a repository grows, which is
+ * the drift this work exists to remove. Holding the range fixed is what keeps
+ * a building's proportions identical at 200 files and at 20,000.
+ *
+ * The consequence is that a very large city covers more ground relative to its
+ * height, exactly as a real one does. That is a framing question — the camera
+ * should move in rather than fit everything on screen — not a reason to
+ * distort the buildings.
+ */
 const SOURCE_MIN_HEIGHT = 6;
 const SOURCE_MAX_HEIGHT = 72;
+/** Depots stay below the shortest ordinary building. */
+const DEPOT_MIN_HEIGHT = 2.4;
+const DEPOT_MAX_HEIGHT = 5.6;
 /**
  * Shape of the height ramp across the source-file rank percentile.
  *
  * Above 1 the low city stays low and the skyline concentrates its drama at the
  * top, which is what makes a handful of towers read as landmarks without
  * needing a separate tier.
+ *
+ * At 2.0 the 99th-percentile building was only about three times the median,
+ * so the skyline's top edge came out nearly flat and nothing in the city read
+ * as a landmark. At 3.0 the mass sits lower and the tallest few genuinely
+ * tower over it. The curve is still strictly increasing, so "height is
+ * file-size rank" is exactly as true as it was — only the shape of the ramp
+ * changed, never its ordering.
  */
-const HEIGHT_CURVE = 2.0;
+const HEIGHT_CURVE = 3.0;
+
+/**
+ * Smallest share of a building handed to its cap.
+ *
+ * The core taper reaches zero at percentile 0, which left the shortest
+ * buildings with no space above the core for a parapet — so the bottom 40% of
+ * every skyline was bare boxes that stopped short of their own declared
+ * height. A floor here means every roof has an edge to light, and because it
+ * makes the taper *flatter* at the low end it cannot disturb the rule that a
+ * bigger file never renders a shorter lit mass.
+ */
+const MIN_CAP_FRACTION = 0.06;
 
 /** Smoothstep on an already-normalised 0..1 input. */
 function smoothstep01(t: number): number {
@@ -344,7 +361,6 @@ export function buildCity(cells: LayoutCell[]): CityData {
   const buildings: Building[] = new Array<Building>(n);
   const aId = new Float32Array(n);
   const aTint = new Float32Array(n);
-  const aLit = new Float32Array(n);
   const aBase = new Float32Array(n * 3);
   const aKind = new Float32Array(n);
   // Horizontal footprint of each core, in world units. The fragment shader
@@ -359,7 +375,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
   const categories: BuildingCategory[] = new Array<BuildingCategory>(n);
   for (let i = 0; i < n; i++) {
     const node = cells[i].node;
-    languages[i] = node.language ?? detectLang(node.name);
+    languages[i] = node.language ?? detectLanguage(node.name);
     categories[i] = classifyBuilding(node.path, languages[i], node.size);
   }
   // An assets-only repository still deserves a skyline, so fall back to
@@ -396,6 +412,10 @@ export function buildCity(cells: LayoutCell[]): CityData {
     const category = categories[i];
     const rawSize = c.node.size;
     const rank = rankByIndex[i];
+    // Depots are ground, not architecture: they keep the plain block form.
+    const typology = category === 'source'
+      ? typologyFor(districtKeyOf(c.node.path))
+      : BLOCK_TYPOLOGY;
 
     let totalHeight: number;
     let profile: Building['profile'];
@@ -418,13 +438,13 @@ export function buildCity(cells: LayoutCell[]): CityData {
        * the visible mass *drop* 23% at the 0.4 boundary — a bigger file
        * rendering a shorter box than its smaller neighbour.
        */
-      coreRatio = 1 - 0.45 * smoothstep01(percentile);
+      coreRatio = 1 - Math.max(MIN_CAP_FRACTION, 0.45 * smoothstep01(percentile));
       parcelFill = SOURCE_PARCEL_FILL;
     } else {
       // Depots: byte-proportional ground, capped height, wider fill. The
       // ceiling sits below the shortest ordinary building on purpose.
       const percentile = infraCount > 1 ? rank / (infraCount - 1) : 1;
-      totalHeight = 2.4 + 3.2 * percentile;
+      totalHeight = DEPOT_MIN_HEIGHT + (DEPOT_MAX_HEIGHT - DEPOT_MIN_HEIGHT) * percentile;
       profile = 'depot';
       coreRatio = 0.88;
       parcelFill = DEPOT_PARCEL_FILL;
@@ -444,24 +464,42 @@ export function buildCity(cells: LayoutCell[]): CityData {
      * therefore make genuinely large buildings, which is honest; keeping them
      * to a sane size is `normalizeSize`'s job, not this one's.
      */
-    const footprintW = r.w * parcelFill;
-    const footprintD = r.h * parcelFill;
+    /*
+     * The typology narrows the plot's SHORT axis only, so a slab stands along
+     * the long axis rather than becoming a needle, and the slack it leaves
+     * opens beside it as a side street. Filling both axes made every building
+     * a near-square box — the treemap already drives plots toward an aspect
+     * ratio near 1 — which is what made the city read as a stamped compound.
+     */
+    const shortIsW = r.w <= r.h;
+    const planFill = category === 'source' ? typology.planFill : 1;
+    const footprintW = r.w * parcelFill * (shortIsW ? planFill : 1);
+    const footprintD = r.h * parcelFill * (shortIsW ? 1 : planFill);
     const coreHeight = totalHeight * coreRatio;
     if (totalHeight > maxHeight) maxHeight = totalHeight;
 
+    /*
+     * Sit in the slack rather than centring in it, so a district's buildings
+     * line up along the same edge and the gap between rows reads as a street
+     * instead of as scattered space. Half of the slack, so nothing ever
+     * touches the plot boundary its details still have to fit inside.
+     */
+    const slackW = (r.w * parcelFill - footprintW) * 0.5 * typology.align;
+    const slackD = (r.h * parcelFill - footprintD) * 0.5 * typology.align;
+
     const col = languageColor(lang);
     buildings[i] = {
-      position: [r.x + r.w / 2, coreHeight / 2, r.y + r.h / 2],
+      position: [r.x + r.w / 2 + slackW, coreHeight / 2, r.y + r.h / 2 + slackD],
       scale: [footprintW, coreHeight, footprintD],
       parcel: [r.w, r.h],
       color: col,
       path: c.node.path, size: rawSize, language: lang, totalHeight, profile, category,
+      typology,
     };
     aId[i] = i;
     aTint[i] = languageEmissiveBoost(lang);
-    aLit[i] = signHash(i * 7 + 42) > 0.90 ? 1.0 : 0.0;
     aKind[i] = category === 'source' ? 0 : 1;
-    aSpan[i] = Math.min(footprintW, footprintD);
+    aSpan[i] = planSpan(footprintW, footprintD);
     aBase[i * 3] = col[0]; aBase[i * 3 + 1] = col[1]; aBase[i * 3 + 2] = col[2];
   }
 
@@ -469,7 +507,6 @@ export function buildCity(cells: LayoutCell[]): CityData {
   const geo = new THREE.BoxGeometry(1, 1, 1);
   geo.setAttribute('aId', new THREE.InstancedBufferAttribute(aId, 1));
   geo.setAttribute('aTint', new THREE.InstancedBufferAttribute(aTint, 1));
-  geo.setAttribute('aLit', new THREE.InstancedBufferAttribute(aLit, 1));
   geo.setAttribute('aBase', new THREE.InstancedBufferAttribute(aBase, 3));
   geo.setAttribute('aKind', new THREE.InstancedBufferAttribute(aKind, 1));
   geo.setAttribute('aSpan', new THREE.InstancedBufferAttribute(aSpan, 1));
@@ -503,7 +540,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_EMISSIVE)
       .replace('#include <fog_fragment>', fogFragmentGLSL('vWP', 'rcAssistKey', 'rcGlowKey'));
   };
-  material.customProgramCacheKey = () => 'repocity-buildings-v4';
+  material.customProgramCacheKey = () => 'repocity-buildings-v7';
 
   const mesh = new THREE.InstancedMesh(geo, material, n);
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
