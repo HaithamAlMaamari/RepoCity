@@ -20,6 +20,40 @@
 export type BuildingCategory = 'source' | 'infrastructure';
 
 /**
+ * Extension → language bucket.
+ *
+ * Lives here rather than in city.ts because the treemap needs it too: plot
+ * area now depends on whether a file is source or infrastructure, and that
+ * decision needs a language. Keeping a private copy in each caller is how this
+ * codebase ended up with language detection written three times over.
+ */
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  py: 'python', rs: 'rust', go: 'go', c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+  java: 'java', cs: 'csharp', kt: 'kotlin', swift: 'swift', dart: 'dart', scala: 'scala',
+  hs: 'haskell', fs: 'fsharp', ml: 'ocaml', clj: 'clojure', cr: 'crystal', zig: 'zig', nim: 'nim',
+  ex: 'elixir', exs: 'elixir', erl: 'erlang', lua: 'lua', r: 'r', jl: 'julia',
+  html: 'html', htm: 'html', css: 'css', scss: 'scss', sass: 'sass', less: 'less',
+  vue: 'vue', svelte: 'svelte', json: 'json', md: 'markdown', mdx: 'markdown',
+  yml: 'yaml', yaml: 'yaml', toml: 'toml', xml: 'xml', proto: 'protobuf',
+  sh: 'shell', bash: 'shell', zsh: 'shell', bat: 'shell', cmd: 'shell', ps1: 'powershell',
+  rb: 'ruby', php: 'php', pl: 'perl', lock: 'lockfile',
+  ini: 'ini', cfg: 'ini', conf: 'ini', env: 'env', txt: 'text',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', svg: 'image', webp: 'image', ico: 'image',
+  ttf: 'font', otf: 'font', woff: 'font', woff2: 'font',
+  csv: 'data', tsv: 'data', zip: 'binary', gz: 'binary', exe: 'binary', dll: 'binary', so: 'binary',
+  tf: 'terraform', nix: 'nix', sol: 'solidity', glsl: 'glsl', vert: 'glsl', frag: 'glsl', wgsl: 'wgsl',
+  graphql: 'graphql', sql: 'sql', tex: 'tex', rst: 'rst',
+};
+
+/** Language bucket for a filename, or `'unknown'`. */
+export function detectLanguage(filename: string): string {
+  const extension = filename.toLowerCase().split('.').pop() ?? '';
+  return EXTENSION_LANGUAGES[extension] ?? 'unknown';
+}
+
+/**
  * Language buckets that are never source: the classifier in data/github.ts
  * already folds media, fonts, archives and lockfiles into these.
  */

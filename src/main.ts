@@ -21,6 +21,7 @@ import type { CityData, Building } from './city/city';
 import { buildRooftops } from './city/rooftops';
 import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
+import { probeBrightness } from './city/brightness-probe';
 import { languageColor, languageDisplayName } from './city/palette';
 import { createCityCameraRig, measureFreeViewport } from './core/camera';
 import type { CityCameraRig, FreeViewport } from './core/camera';
@@ -90,8 +91,28 @@ let summaryUserToggled = false;
 syncExplorerForViewport();
 syncSummaryForViewport();
 
+/* ═══ World scale ═══════════════════════════════════════
+ *
+ * The city's ground now grows with the repository — land area is proportional
+ * to file count, which is what keeps a building's proportions the same at 13
+ * files and at 5,000. It also means the world is no longer a fixed size, so
+ * every constant expressed in absolute world units has to be derived from it
+ * rather than written down. Fog density is the one that fails loudest: it is
+ * per-unit-distance, so a city four times wider at a fixed density dissolves
+ * into a white-out well before its far edge.
+ *
+ * These are the values for a city of REFERENCE_CITY_SIZE, which is the scale
+ * everything downstream — FOG_CEILING in the facade shader, the rim placement,
+ * the entrance camera — was originally tuned against.
+ */
+const REFERENCE_CITY_SIZE = 240;
+const FOG_DENSITY_AT_REFERENCE = 0.0032;
+const CAMERA_FAR_AT_REFERENCE = 4000;
+
 /* ═══ Renderer state ════════════════════════════════════ */
 let renderer: THREE.WebGLRenderer;
+let magentaRim: THREE.PointLight;
+let cyanRim: THREE.PointLight;
 let composer: EffectComposer;
 let scene: THREE.Scene;
 let camera: THREE.PerspectiveCamera;
@@ -172,20 +193,21 @@ async function init(): Promise<void> {
   /*
    * The far ground now respects this fog (see atmosphere.ts), which is what
    * dissolves the horizon instead of ending the world in a hard line. Density
-   * stays where it was: the facade shader's FOG_CEILING is tuned against it,
-   * and raising it dims the small-repository cities that already look best.
+   * is normalised against city size in `applyWorldScale` — the number here is
+   * the value for a REFERENCE_CITY_SIZE city, which is what the facade
+   * shader's FOG_CEILING was tuned against.
    */
-  scene.fog = new THREE.FogExp2(NIGHT_COLOR, 0.0032);
+  scene.fog = new THREE.FogExp2(NIGHT_COLOR, FOG_DENSITY_AT_REFERENCE);
 
   /* lighting — 80% dark, neon accents carry the scene */
   scene.add(new THREE.AmbientLight(0x293052, 0.36));
   const moon = new THREE.DirectionalLight(0xbcc8ff, 0.38);
   moon.position.set(-0.4, 1, 0.25);
   scene.add(moon);
-  const magentaRim = new THREE.PointLight(0xff2d8a, 0.28, 600, 1.6);
+  magentaRim = new THREE.PointLight(0xff2d8a, 0.28, 600, 1.6);
   magentaRim.position.set(120, 50, -90);
   scene.add(magentaRim);
-  const cyanRim = new THREE.PointLight(0x00d4ff, 0.25, 600, 1.6);
+  cyanRim = new THREE.PointLight(0x00d4ff, 0.25, 600, 1.6);
   cyanRim.position.set(-120, 60, 90);
   scene.add(cyanRim);
 
@@ -194,7 +216,7 @@ async function init(): Promise<void> {
   scene.add(sky.group);
 
   /* camera */
-  camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 4000);
+  camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, CAMERA_FAR_AT_REFERENCE);
   camera.position.set(110, 60, 130);
   camera.lookAt(0, 6, 0);
 
@@ -368,6 +390,7 @@ async function loadRepo(
     cityOffsetX = -cx;
     cityOffsetZ = -cz;
     const citySize = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
+    applyWorldScale(citySize);
 
     const cityRoot = new THREE.Group();
     cityRoot.name = 'cityRoot';
@@ -468,7 +491,10 @@ async function loadRepo(
     });
     controls.maxDistance = Math.max(citySize * 3, cityCamera.framing.distance * 1.6, 250);
     controls.enabled = !cityCamera.entranceActive;
-    if (import.meta.env.DEV) logFraming(cityCamera);
+    if (import.meta.env.DEV) {
+      logFraming(cityCamera);
+      exposeMeasurementHandle();
+    }
     billboards.update(camera, appliedHeight || window.innerHeight);
     renderer.compile(scene, camera);
     composer.render(0);
@@ -703,6 +729,67 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
 /** The canvas region no overlay panel covers, measured live so toggles reframe. */
 function freeViewport(): FreeViewport {
   return measureFreeViewport(canvas, [headerEl, sidebarEl, explorerPanelEl]);
+}
+
+/**
+ * Dev-only measurement handle, read by `scripts/measure-brightness.mjs`.
+ *
+ * The shader's brightness inputs depend on the solved camera against a real
+ * repository, so they can only be sampled from a running app — a synthetic
+ * fixture has answered this question wrongly twice. Exposing the live camera
+ * rather than a snapshot matters: the entrance is still flying when the page
+ * settles, and a value captured at build time would describe the wrong pose.
+ *
+ * Guarded by `import.meta.env.DEV`, so it is dead code in a production build.
+ */
+function exposeMeasurementHandle(): void {
+  (window as unknown as Record<string, unknown>).__repocityProbe = () => {
+    if (!cityData) return null;
+    const buffer = new THREE.Vector2();
+    renderer.getDrawingBufferSize(buffer);
+    return probeBrightness(cityData.buildings, {
+      cameraPosition: [camera.position.x, camera.position.y, camera.position.z],
+      fov: camera.fov,
+      bufferHeight: buffer.y,
+      offset: [cityOffsetX, cityOffsetZ],
+    });
+  };
+}
+
+/**
+ * Re-derive every absolute world-unit constant for a city of this size.
+ *
+ * Called once per build, before the first frame. Each of these was a literal
+ * fitted to a 240-unit city, which was safe only while every city was that
+ * size; now that land grows with the repository they have to scale with it.
+ */
+function applyWorldScale(citySize: number): void {
+  const relative = citySize / REFERENCE_CITY_SIZE;
+
+  /*
+   * Hold the optical depth ACROSS the city constant rather than the density
+   * per unit, so a large city is as legible as a small one. The `min(1, …)` is
+   * load-bearing: density must never rise above the reference for a small
+   * city, which would dim exactly the repositories that already look best.
+   */
+  if (scene.fog instanceof THREE.FogExp2) {
+    scene.fog.density = FOG_DENSITY_AT_REFERENCE * Math.min(1, 1 / relative);
+  }
+
+  // The far corner of a large city sits well beyond the reference far plane.
+  const far = Math.max(CAMERA_FAR_AT_REFERENCE, citySize * 5);
+  if (camera.far !== far) {
+    camera.far = far;
+    camera.updateProjectionMatrix();
+  }
+
+  // Rim lights are placed in world units, so at a fixed position they light
+  // one corner of a large city and nothing else.
+  const rimScale = Math.max(1, relative);
+  magentaRim.position.set(120 * rimScale, 50 * rimScale, -90 * rimScale);
+  magentaRim.distance = 600 * rimScale;
+  cyanRim.position.set(-120 * rimScale, 60 * rimScale, 90 * rimScale);
+  cyanRim.distance = 600 * rimScale;
 }
 
 /** Dev-only composition trace: what was measured, and where the city landed. */
