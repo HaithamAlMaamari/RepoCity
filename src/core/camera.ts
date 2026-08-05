@@ -1016,6 +1016,17 @@ export interface CityCameraRig {
   readonly visualBox: CityFitBox;
   /** True while the entrance owns the camera; orbit controls stay disabled. */
   readonly entranceActive: boolean;
+  /**
+   * True while the camera is where the RIG put it — the entrance, the resting
+   * pose, or the composed showcase orbit — and false once the user has dragged
+   * it somewhere of their own.
+   *
+   * Anything re-solving the composition for a different viewport has to know
+   * this. Re-framing is right when the pose is one the rig chose for a
+   * viewport with panels in it, and wrong when it is a view the user picked
+   * deliberately: recomposing that would silently move their shot.
+   */
+  readonly composedPose: boolean;
   /** Seconds since the last user interaction. */
   readonly idleTime: number;
   /** Farthest composed distance over a full orbit — a sane `maxDistance`. */
@@ -1317,6 +1328,7 @@ export function createCityCameraRig(options: CityCameraOptions): CityCameraRig {
     get box(): CityFitBox { return box; },
     get visualBox(): CityFitBox { return visualBox; },
     get entranceActive(): boolean { return entranceActive; },
+    get composedPose(): boolean { return composed && !userMoved; },
     get idleTime(): number { return idleTime; },
     get maxOrbitDistance(): number { return orbitMaxDistance; },
 
