@@ -23,7 +23,7 @@ import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
 import { probeBrightness } from './city/brightness-probe';
 import { languageColor, languageDisplayName } from './city/palette';
-import { cityRadius, createCityCameraRig, measureFreeViewport } from './core/camera';
+import { cityRadius, createCityCameraRig, freeViewportFromRects, measureFreeViewport } from './core/camera';
 import type { CityCameraRig, FreeViewport } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
@@ -728,9 +728,19 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
 }
 
 /** The canvas region no overlay panel covers, measured live so toggles reframe. */
+/**
+ * Viewport the framing solves against while the poster is being composed.
+ *
+ * The rig reads its viewport through this function on every solve, so setting
+ * this is how the poster gets composed for its own full-bleed frame instead of
+ * for the band left between the app's panels. Null everywhere else.
+ */
+let posterViewport: FreeViewport | null = null;
+
 function freeViewport(): FreeViewport {
-  return measureFreeViewport(canvas, [headerEl, sidebarEl, explorerPanelEl]);
+  return posterViewport ?? measureFreeViewport(canvas, [headerEl, sidebarEl, explorerPanelEl]);
 }
+
 
 /**
  * Dev-only measurement handle, read by `scripts/measure-brightness.mjs`.
@@ -1314,6 +1324,52 @@ const POSTER_FONTS = [
   '500 18px "JetBrains Mono"',
 ] as const;
 
+/**
+ * Point the camera at the composition the poster's own frame wants, and hand
+ * back the undo.
+ *
+ * The pose is read through `orbitFraming` at the azimuth the rig is already
+ * showing, so the poster is the same view from the same angle — only the
+ * distance and the centring change, because they are the parts that were
+ * solved against a viewport with panels in it. The camera is restored exactly,
+ * including its orientation, so a capture never leaves the live view moved.
+ */
+function applyPosterFraming(width: number, height: number): () => void {
+  const rig = cityCamera;
+  if (!rig) return () => undefined;
+
+  const position = camera.position.clone();
+  const quaternion = camera.quaternion.clone();
+  const target = controls.target.clone();
+
+  /*
+   * The whole frame, with nothing reserved for the caption. Reserving a band
+   * at the foot was tried and is wrong: the composition then centres the city
+   * in what is left and the poster comes out top-heavy with a dead strip above
+   * the type. The caption is designed to sit ON the city, over the gradient
+   * that darkens the lower third — so the framing should fill the full bleed
+   * and let the type overlay it.
+   */
+  posterViewport = freeViewportFromRects({ left: 0, top: 0, width, height }, []);
+  /*
+   * The azimuth comes from where the camera actually is, not from
+   * `framing.azimuth`: that is the hero angle, and the showcase drift spends
+   * most of its time away from it. Taking the live bearing is what keeps the
+   * poster the same view the screen is showing.
+   */
+  const azimuth = Math.atan2(position.x - target.x, position.z - target.z);
+  const shot = rig.orbitFraming(azimuth);
+  camera.position.copy(shot.position);
+  camera.lookAt(shot.aim);
+
+  return () => {
+    posterViewport = null;
+    camera.position.copy(position);
+    camera.quaternion.copy(quaternion);
+    controls.target.copy(target);
+  };
+}
+
 async function capturePoster(): Promise<void> {
   if (!renderer) return;
   const W = 1920, H = 1080;
@@ -1335,7 +1391,25 @@ async function capturePoster(): Promise<void> {
     camera.updateProjectionMatrix();
     renderer.setSize(W, H, false);
     composer.setSize(W, H);
+
+    /*
+     * Recompose for the poster's own frame — but only while the camera is
+     * still where the rig put it.
+     *
+     * On screen the city is composed for the band between the panels. The
+     * poster has no panels, so carrying that pose over leaves the city inset
+     * with the sidebar's space empty beside it. Solving against the full
+     * bleed, minus the strip the caption occupies, fills the picture.
+     *
+     * If the user has orbited to a view of their own, none of that applies:
+     * the poster should be the shot they are looking at, and recomposing it
+     * would quietly move their camera. `composedPose` is exactly that
+     * distinction, so the poster follows the rig only while the rig is
+     * driving.
+     */
+    const restore = cityCamera?.composedPose ? applyPosterFraming(W, H) : undefined;
     composer.render();
+    restore?.();
 
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
