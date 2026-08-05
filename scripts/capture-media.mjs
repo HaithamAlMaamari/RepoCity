@@ -1,6 +1,9 @@
 /**
- * capture-media.mjs — regenerate every image the project shows the outside
- * world: the og:image, the README hero, and the gallery.
+ * capture-media.mjs — regenerate the still images the project shows the
+ * outside world: the og:image and the README gallery.
+ *
+ * The README's lead image is the entrance animation, which capture-gif.mjs
+ * records; a second still of the same city underneath it was redundant weight.
  *
  * These were made by hand, and hand-made assets drift. Each of them was
  * generated before a run of visual work and then kept advertising a city the
@@ -13,7 +16,7 @@
  * produces a comparable set rather than a new composition.
  *
  * Usage:
- *   node scripts/capture-media.mjs [--url=…] [--only=og,hero]
+ *   node scripts/capture-media.mjs [--url=…] [--only=og,react]
  *
  * Requires `npm run dev` and a local Chrome, like the other capture tools, and
  * is deliberately outside `npm run ci` for the same reason: it needs a GPU and
@@ -33,7 +36,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
  */
 const TARGETS = [
   { key: 'og', repo: 'facebook/react', out: 'public/og.jpg', width: 1200, height: 630, type: 'jpeg' },
-  { key: 'hero', repo: 'facebook/react', out: 'docs/media/hero.png', width: 1568, height: 726, type: 'png' },
   { key: 'react', repo: 'facebook/react', out: 'docs/media/react.jpg', width: 1200, height: 630, type: 'jpeg' },
   { key: 'vue', repo: 'vuejs/vue', out: 'docs/media/vue.jpg', width: 1200, height: 630, type: 'jpeg' },
   { key: 'flask', repo: 'pallets/flask', out: 'docs/media/flask.jpg', width: 1200, height: 630, type: 'jpeg' },

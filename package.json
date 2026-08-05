@@ -57,7 +57,8 @@
     "worker:types": "wrangler types",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
     "deploy": "npm run build && wrangler deploy",
-    "capture:media": "node scripts/capture-media.mjs"
+    "capture:media": "node scripts/capture-media.mjs",
+    "capture:gif": "node scripts/capture-gif.mjs"
   },
   "dependencies": {
     "three": "^0.171.0"
