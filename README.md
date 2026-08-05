@@ -84,14 +84,15 @@ npm run ci          # the full release gate CI runs
 
 `npm run ci` reproduces the GitHub Actions gate: lint, unit tests, the Workerd runtime suite, both TypeScript targets, a production build, a high-severity dependency audit, and a Cloudflare deployment dry run. The Workerd suite validates real Worker bindings, request signals, streamed body limits, and Cache API behavior without production credentials or external network access.
 
-Two developer tools sit deliberately outside the gate, because they need a GPU and network access:
+Three developer tools sit deliberately outside the gate, because they need a GPU and network access:
 
 ```sh
 npm run capture <label>   # render the fixture repositories to artifacts/captures/<label>
 npm run measure           # report what the building shader is fed, per building
+npm run capture:media     # regenerate the og:image, README hero, and gallery
 ```
 
-Both require `npm run dev` and a local Chrome. Visual changes are verified by comparing two labelled capture runs of the same repositories at pinned commits — a synthetic fixture has given the wrong answer more than once.
+All three require `npm run dev` and a local Chrome. Visual changes are verified by comparing two labelled capture runs of the same repositories at pinned commits — a synthetic fixture has given the wrong answer more than once. `capture:media` exists because every image in this README is a picture of the renderer, and a hand-made screenshot silently stops being true the moment the renderer changes.
 
 ## Security
 

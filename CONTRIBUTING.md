@@ -45,6 +45,8 @@ npm run test:watch
 
 **Verify visual changes against real repositories.** A synthetic fixture has given the wrong answer twice, because the things that break — plot sizes, on-screen building widths, language mix — only take their real values on a real tree. `npm run capture <label>` renders a fixed set of repositories at pinned commits so two labelled runs can be compared side by side, and `npm run measure` reports what the building shader is actually being fed, per building, at the solved camera. Both need `npm run dev` and a local Chrome, and both are deliberately outside `npm run ci` — they want a GPU and the network.
 
+If your change alters what the city looks like, finish by running `npm run capture:media`. Every image in the README and the og:image is a picture of the renderer, so they stop being true the moment it changes — and because a shared link is often the only view of the project somebody gets, a stale one is the most visible thing in the repository.
+
 ## Where things live
 
 - `src/data` — GitHub ingestion, contract validation, repository modeling

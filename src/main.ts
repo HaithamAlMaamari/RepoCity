@@ -755,6 +755,22 @@ function exposeMeasurementHandle(): void {
       offset: [cityOffsetX, cityOffsetZ],
     });
   };
+
+  /*
+   * Where the city actually sits on screen, in CSS pixels.
+   *
+   * `capture-media.mjs` crops to this. The framing solver deliberately leaves
+   * a margin so the city never touches the viewport edge, which is right for
+   * the app and wrong for a social card — an og:image that is half empty black
+   * is the weakest possible version of the one picture most people ever see.
+   * Cropping is the contained fix; re-framing the app itself is a separate
+   * product decision.
+   */
+  (window as unknown as Record<string, unknown>).__repocityFraming = () => {
+    if (!cityCamera) return null;
+    const { left, top, width, height } = cityCamera.framing.screen;
+    return { left, top, width, height };
+  };
 }
 
 /**
