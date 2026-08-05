@@ -7,16 +7,19 @@
 
 import { classifyBuilding, detectLanguage } from './file-class';
 
-/** Options controlling the treemap layout. */
+/**
+ * Options controlling the treemap layout.
+ *
+ * `padding` and `depthScale` used to live here, describing a per-cell gutter
+ * subtracted at every level. Space between buildings is now reserved as roads
+ * during layout instead, so those two configured nothing; they are gone rather
+ * than left as settings that silently do nothing.
+ */
 export interface LayoutOptions {
-  /** Canvas width in pixels (default: 200). */
+  /** Width of the ground the repository is laid out on, in world units. */
   width?: number;
-  /** Canvas height in pixels (default: 200). */
+  /** Depth of that ground, in world units. */
   height?: number;
-  /** Base padding between rectangles in pixels (default: 0.5). */
-  padding?: number;
-  /** Additional padding per depth level (default: 0.3). */
-  depthScale?: number;
 }
 
 /** A positioned rectangle with depth info. */
@@ -32,6 +35,38 @@ export interface LayoutRect {
 export interface LayoutCell {
   node: TreeNode;
   rect: LayoutRect;
+}
+
+/**
+ * A strip of ground reserved for a road, and guaranteed empty.
+ *
+ * Streets used to be inferred *after* the fact: the renderer merged district
+ * bounding boxes into bands, looked for whatever gaps happened to be left
+ * over, and then clipped those against every plot. The treemap tiles its rect
+ * edge to edge, so there were essentially no leftovers — measured at one to
+ * three interior streets for cities from 13 to 5,000 files, which is why the
+ * only road anybody could see was the ring around the outside and why traffic
+ * circled the city rather than driving through it.
+ *
+ * Reserving the space during layout inverts that. A directory takes a road
+ * margin out of its rect before its children are allocated, so the road is
+ * empty by construction rather than by clipping, and the renderer is handed
+ * the network instead of reverse-engineering it.
+ */
+export interface LayoutCorridor {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  /** Nesting level that reserved it: 0 is an arterial, deeper is an alley. */
+  depth: number;
+  axis: 'x' | 'z';
+}
+
+/** Everything the treemap allocated: the plots, and the roads between them. */
+export interface LayoutResult {
+  cells: LayoutCell[];
+  corridors: LayoutCorridor[];
 }
 
 /** A node in the repository file tree. */
@@ -56,15 +91,11 @@ interface WorkRect {
 interface NormalizedOptions {
   width: number;
   height: number;
-  padding: number;
-  depthScale: number;
 }
 
 const DEFAULT_OPTIONS: NormalizedOptions = {
   width: 200,
   height: 200,
-  padding: 0.25,
-  depthScale: 0.3,
 };
 
 /**
@@ -113,9 +144,10 @@ export function repositoryLandSize(renderedFileCount: number): number {
 export function buildLayout(
   root: TreeNode,
   options?: LayoutOptions,
-): LayoutCell[] {
+): LayoutResult {
   const opts = applyDefaults(options);
   const cells: LayoutCell[] = [];
+  const corridors: LayoutCorridor[] = [];
 
   // Once for the whole tree: recursing per level would be O(n * depth).
   const weights = computeWeights(root);
@@ -124,25 +156,51 @@ export function buildLayout(
   const rect: WorkRect = { x: 0, y: 0, w: opts.width, h: opts.height };
   const items = root.children.map((node) => weigh(node, weights)).sort(byWeightDescending);
 
-  squarify(items, rect, 0, cells, opts, weights);
-  return cells;
+  squarify(items, rect, 0, cells, opts, corridors, weights);
+  return { cells, corridors };
 }
 
 /**
- * Most of an axis a cell may lose to its gutter, at the top of the tree.
+ * Share of a directory's shorter axis taken for the road around it.
  *
- * The cap is charged once per ANCESTOR, so a flat value compounds: at 0.25 a
- * cell three levels down keeps 0.75^6 = 18% of its area, and 77% of all
- * placements were hitting the cap on both axes. Deleting the gutter is not the
- * answer — the gaps are what read as streets — but charging an arterial's
- * width between two sibling files is.
- *
- * Decaying it geometrically makes the total charge convergent and gives the
- * city the street hierarchy it should have had all along: a wide gap between
- * top-level districts, a narrow one between files in the same folder.
+ * Because it is a fraction of the rect being subdivided, and that rect shrinks
+ * with every level of nesting, the road hierarchy falls out for free: a
+ * top-level district is ringed by an arterial, a package inside it by a
+ * street, a leaf folder by an alley. This supersedes the depth-decayed gutter
+ * that used to sit here — that was a mitigation for a per-cell inset that
+ * compounded once per ancestor, and reserving space per directory removes the
+ * compounding rather than damping it.
  */
-const MAX_GUTTER_FRACTION = 0.22;
-const GUTTER_DEPTH_DECAY = 0.55;
+const ROAD_FRACTION = 0.06;
+/**
+ * ...decayed once per level, because the ring is charged at EVERY ancestor.
+ *
+ * A flat fraction compounds: at 0.06 a directory five levels down keeps
+ * 0.88^5 = 53% of its short axis and 28% of its area, which measured as land
+ * coverage falling from 55% to 27% and the depth-independence of plot area —
+ * hard-won, two identical files previously within 1x of each other — going
+ * back to 2.5x. This is the same trap the per-cell gutter fell into, and it
+ * has the same answer: make the total charge convergent so the deepest folder
+ * still pays a bounded share.
+ */
+const ROAD_DEPTH_DECAY = 0.45;
+/** Narrower than this and the road is sub-pixel noise; wider and it is a plaza. */
+const ROAD_MIN_WIDTH = 0.15;
+const ROAD_MAX_WIDTH = 5;
+/**
+ * A directory smaller than this on its short axis is not worth ringing — the
+ * road would take more of it than the buildings.
+ */
+const ROAD_MIN_RECT = 2.5;
+
+/**
+ * Gap left around a FILE's plot, as a share of its own shorter axis.
+ *
+ * Small and non-compounding: it exists so two neighbouring parcels read as two
+ * parcels, not so that every file gets a moat. Separation between groups of
+ * files is the roads' job now.
+ */
+const FILE_GUTTER_FRACTION = 0.04;
 
 /**
  * A node paired with the area weight the treemap should give it.
@@ -261,6 +319,39 @@ function weigh(node: TreeNode, weights: Map<TreeNode, number>): WeightedItem {
   return { node, weight: weights.get(node) ?? 0 };
 }
 
+/**
+ * Take a road margin out of `rect`, record the four strips, and return what is
+ * left for the directory's children.
+ *
+ * The road is a ring just inside the directory's own boundary, so two adjacent
+ * directories end up with their rings abutting and the pair reads as one
+ * street between them. Directories too small to spare the width keep their
+ * whole rect and get no road, which is what stops a leaf folder of three tiny
+ * files being mostly asphalt.
+ */
+function reserveRoad(rect: LayoutRect, depth: number, corridors: LayoutCorridor[]): LayoutRect {
+  const shortSide = Math.min(rect.w, rect.h);
+  if (shortSide < ROAD_MIN_RECT) return { ...rect, depth };
+
+  const fraction = ROAD_FRACTION * Math.pow(ROAD_DEPTH_DECAY, depth);
+  const width = Math.min(ROAD_MAX_WIDTH, Math.max(ROAD_MIN_WIDTH, shortSide * fraction));
+  const x2 = rect.x + rect.w;
+  const z2 = rect.y + rect.h;
+  corridors.push(
+    { x: rect.x, z: rect.y, w: rect.w, d: width, depth, axis: 'x' },
+    { x: rect.x, z: z2 - width, w: rect.w, d: width, depth, axis: 'x' },
+    { x: rect.x, z: rect.y, w: width, d: rect.h, depth, axis: 'z' },
+    { x: x2 - width, z: rect.y, w: width, d: rect.h, depth, axis: 'z' },
+  );
+  return {
+    x: rect.x + width,
+    y: rect.y + width,
+    w: Math.max(0, rect.w - width * 2),
+    h: Math.max(0, rect.h - width * 2),
+    depth,
+  };
+}
+
 /** Descending by weight — the order squarify expects. */
 function byWeightDescending(a: WeightedItem, b: WeightedItem): number {
   return b.weight - a.weight;
@@ -273,8 +364,6 @@ function applyDefaults(options?: LayoutOptions): NormalizedOptions {
   return {
     width: options?.width ?? DEFAULT_OPTIONS.width,
     height: options?.height ?? DEFAULT_OPTIONS.height,
-    padding: options?.padding ?? DEFAULT_OPTIONS.padding,
-    depthScale: options?.depthScale ?? DEFAULT_OPTIONS.depthScale,
   };
 }
 
@@ -291,6 +380,7 @@ function squarify(
   depth: number,
   cells: LayoutCell[],
   options: NormalizedOptions,
+  corridors: LayoutCorridor[],
   weights: Map<TreeNode, number>,
 ): void {
   if (items.length === 0) return;
@@ -349,43 +439,35 @@ function squarify(
       };
     }
 
-    /*
-     * Gutter between this cell and its neighbours.
-     *
-     * The requested amount still grows with depth, so nested directories read
-     * as separate blocks. What is new is the ceiling: it is capped per axis at
-     * a fraction of that axis, and applied to width and height independently.
-     *
-     * Before, the gutter was a flat world-unit subtraction applied to both
-     * axes and compounded down the whole ancestor chain, so a file four levels
-     * deep lost 4.75 units from each side before its own parcel was measured.
-     * Two files of identical size ended up with wildly different plots purely
-     * because one sat deeper in the tree, thin cells were reduced to slivers,
-     * and any cell narrower than the gutter was silently dropped from the city
-     * altogether by the `> 0` guard below.
-     */
-    const requested = options.padding + options.depthScale * depth;
-    const fraction = MAX_GUTTER_FRACTION * Math.pow(GUTTER_DEPTH_DECAY, depth);
-    const padX = Math.min(requested, itemRect.w * fraction);
-    const padY = Math.min(requested, itemRect.h * fraction);
-    const paddedRect: LayoutRect = {
-      x: itemRect.x + padX / 2,
-      y: itemRect.y + padY / 2,
-      w: Math.max(0, itemRect.w - padX),
-      h: Math.max(0, itemRect.h - padY),
-      depth,
-    };
-
     if (item.node.type === 'file') {
-      if (paddedRect.w > 0 && paddedRect.h > 0) {
-        cells.push({ node: item.node, rect: paddedRect });
-      }
+      /*
+       * A file keeps almost all of its parcel. The separation that used to
+       * come from a per-cell gutter now comes from the road around the folder,
+       * so this is only enough to keep two neighbouring parcel lines distinct.
+       */
+      const padX = itemRect.w * FILE_GUTTER_FRACTION;
+      const padY = itemRect.h * FILE_GUTTER_FRACTION;
+      const plot: LayoutRect = {
+        x: itemRect.x + padX / 2,
+        y: itemRect.y + padY / 2,
+        w: Math.max(0, itemRect.w - padX),
+        h: Math.max(0, itemRect.h - padY),
+        depth,
+      };
+      if (plot.w > 0 && plot.h > 0) cells.push({ node: item.node, rect: plot });
     } else {
-      // Recurse into directory
+      /*
+       * Take the road out of the directory BEFORE its children are allocated,
+       * and record it. Nothing is ever placed in this strip, so the renderer
+       * does not have to clip a guessed road against every plot to find out
+       * whether it survived — which is how the network came to consist of one
+       * ring and, at best, three interior streets.
+       */
+      const inner = reserveRoad(itemRect, depth, corridors);
       const childItems = item.node.children
         .map((node) => weigh(node, weights))
         .sort(byWeightDescending);
-      squarify(childItems, paddedRect, depth + 1, cells, options, weights);
+      squarify(childItems, inner, depth + 1, cells, options, corridors, weights);
     }
 
     offset += itemLength;
@@ -409,7 +491,7 @@ function squarify(
         h: rect.h,
       };
     }
-    squarify(remaining, newRect, depth, cells, options, weights);
+    squarify(remaining, newRect, depth, cells, options, corridors, weights);
   }
 }
 
