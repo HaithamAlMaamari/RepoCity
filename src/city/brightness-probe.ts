@@ -30,6 +30,7 @@ import {
   ASSIST_NONE_PX,
   DISTANT_GLOW_GAIN,
   FLOOR_SHIFT_RANGE,
+  AMBER_KNEE,
   TINT_OFFSET,
   planSpan,
   luminance,
@@ -79,9 +80,13 @@ export function assistForSpanPx(spanPx: number): number {
  * amber segment starts above 0.9, so the hero languages could never reach it.
  */
 export function windowTint(tint: number, floorShift: number): { et: number; tint: Vec3 } {
-  const et = clamp01((tint - TINT_OFFSET) / (1 - TINT_OFFSET) + floorShift);
-  const t1 = clamp01(et / 0.9);
-  const t2 = clamp01((et - 0.9) / 0.1);
+  const base = clamp01((tint - TINT_OFFSET) / (1 - TINT_OFFSET));
+  // Scaled to the room left inside this language's own zone, so the per-floor
+  // jitter can never carry a facade across the amber knee. See AMBER_KNEE.
+  const headroom = base < AMBER_KNEE ? AMBER_KNEE - base : 1 - base;
+  const et = clamp01(base + floorShift * Math.min(1, headroom / FLOOR_SHIFT_RANGE));
+  const t1 = clamp01(et / AMBER_KNEE);
+  const t2 = clamp01((et - AMBER_KNEE) / (1 - AMBER_KNEE));
   return { et, tint: mix3(mix3(COOL, MAGENTA, t1), WARM, t2) };
 }
 
