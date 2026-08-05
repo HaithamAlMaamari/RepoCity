@@ -23,7 +23,7 @@ import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
 import { probeBrightness } from './city/brightness-probe';
 import { languageColor, languageDisplayName } from './city/palette';
-import { createCityCameraRig, measureFreeViewport } from './core/camera';
+import { cityRadius, createCityCameraRig, measureFreeViewport } from './core/camera';
 import type { CityCameraRig, FreeViewport } from './core/camera';
 import { createSceneRandom } from './core/random';
 import { DEFAULT_SCENE_SEED, parseSceneHash, serializeSceneHash } from './core/url-state';
@@ -766,10 +766,39 @@ function exposeMeasurementHandle(): void {
    * Cropping is the contained fix; re-framing the app itself is a separate
    * product decision.
    */
+  /*
+   * Re-solve the composition now, rather than after the 450 ms debounce.
+   *
+   * The capture tools hide the UI by injecting `display: none`, which the app
+   * cannot observe: no panel toggle fires, and the synthetic resize event is
+   * dropped by `applyPendingResize` because the window itself did not change
+   * size. The framing therefore stayed solved for a viewport with panels in
+   * it, and every captured city sat inset where the sidebar used to be. A real
+   * user opening or closing a panel already gets a refresh.
+   */
+  (window as unknown as Record<string, unknown>).__repocityRefresh = () => {
+    cityCamera?.refresh();
+  };
+
   (window as unknown as Record<string, unknown>).__repocityFraming = () => {
     if (!cityCamera) return null;
     const { left, top, width, height } = cityCamera.framing.screen;
-    return { left, top, width, height };
+    const view = freeViewport();
+    return {
+      left, top, width, height,
+      // The solver's own measurements. Reported rather than recomputed from
+      // the rect, because both are fractions of the FREE viewport, not of the
+      // canvas — deriving them from canvas size understates a composition
+      // whenever a panel is inset, which is most of the time.
+      widthFill: cityCamera.framing.widthFill,
+      heightFill: cityCamera.framing.heightFill,
+      distance: cityCamera.framing.distance,
+      // So a measurement can tell whether the distance floor is what stopped
+      // the composition reaching its targets, rather than the height fit.
+      cityRadius: cityRadius(cityCamera.visualBox),
+      free: { left: view.left, top: view.top, width: view.width, height: view.height },
+      canvas: { width: view.canvasWidth, height: view.canvasHeight },
+    };
   };
 }
 

@@ -132,8 +132,17 @@ export async function hideInterface(page) {
     content: `#topbar, .presets, #sidebar, #explore-panel, #info,
               #loading, .hint-row, .grain { display: none !important; }`,
   });
-  // Let the solver observe the larger viewport and re-frame.
-  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  /*
+   * Ask the app to re-solve directly. Dispatching a resize event is not
+   * enough and never was: the window has not actually changed size, so the
+   * resize path early-returns and the framing stays solved for a viewport
+   * that still had panels in it. Every capture taken that way rendered the
+   * city inset where the sidebar used to be, with dead margins around it.
+   */
+  await page.evaluate(() => {
+    window.__repocityRefresh?.();
+    window.dispatchEvent(new Event('resize'));
+  });
   await page.waitForTimeout(2500);
 }
 

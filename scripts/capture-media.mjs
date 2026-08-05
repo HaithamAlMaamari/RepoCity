@@ -51,16 +51,19 @@ const only = flag('only', '');
 const selected = only ? TARGETS.filter((t) => only.split(',').includes(t.key)) : TARGETS;
 
 /**
- * Screenshot the city cropped to the framing solver's own idea of where it is.
+ * Screenshot the city, trimming any ground the composition left over.
  *
- * The solver leaves a deliberate margin so the city never touches the viewport
- * edge. That is correct in the app and wrong for a shared image, which wants
- * the picture to fill the frame — an og:image that is half empty black is the
- * weakest version of the one view most people ever get of the project.
+ * Mostly a safety net now. It was written when hiding the UI did not re-solve
+ * the framing, so every capture was composed for a viewport that still had
+ * panels in it and the city sat inset with dead black around it — cropping was
+ * covering for that. With the refresh wired up the city fills and overflows
+ * the frame on its own, and this usually clamps to the whole canvas and does
+ * nothing.
  *
- * The crop is expanded to the target aspect ratio, clamped to the canvas, and
- * drawn into an offscreen canvas at the exact output size, so the result is
- * the requested dimensions rather than whatever the crop happened to be.
+ * It still earns its place for output ratios the composition was not solved
+ * against, where the fit can leave an apron of empty plate below the city. The
+ * crop is expanded to the target ratio and drawn into an offscreen canvas at
+ * the exact output size, so the result is always the requested dimensions.
  */
 async function renderCropped(page, target) {
   /*
@@ -91,11 +94,15 @@ async function renderCropped(page, target) {
       /*
        * The top edge is the canvas, never the framing rect.
        *
-       * `framing.screen` is the box the camera solver FITTED, not the city's
-       * true extent — it is a high-percentile box, so the tallest spires stand
-       * above it. Cropping to it decapitated them. Everything above the city
-       * is sky and costs nothing to keep, so the only thing worth trimming is
-       * the empty apron below the plate and the dead space either side.
+       * `framing.screen` is the box the camera solver FITTED, which is the
+       * city's full extent only while no tower is an outlier. Where one is —
+       * react carries a 72-unit landmark over a roughly 30-unit skyline — the
+       * box is capped at `OUTLIER_HEADROOM` above the clipped skyline and the
+       * tip is deliberately allowed out of frame rather than dragging the
+       * whole camera back. Cropping to that rect therefore decapitates the
+       * landmarks. Sky above the city costs nothing to keep, so the only
+       * things worth trimming are the empty apron below the plate and the
+       * dead space either side.
        */
       let x1 = framing.left - framing.width * margin;
       let x2 = framing.left + framing.width * (1 + margin);
