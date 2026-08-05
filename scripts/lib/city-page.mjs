@@ -24,7 +24,19 @@ export const SETTLE_MS = 15_000;
 /** A cold large repository (vscode, three.js) can legitimately take minutes. */
 const BUILD_TIMEOUT_MS = 180_000;
 
-const STILL_WORKING = /fetching|building|rebuilding|initial/i;
+/**
+ * Status text that means the app is still working, matched against the exact
+ * phrases `setStatus` uses.
+ *
+ * The loose version of this — `/fetching|building|rebuilding|initial/` — also
+ * matched the SUCCESS messages, because "5,000 buildings from a deterministic
+ * sample." and "508 buildings rendered." both contain "building". So the wait
+ * never satisfied its own exit condition and every capture, measurement and
+ * media asset sat out the full 180-second build timeout before continuing on
+ * the sidebar check alone. `building city` is the progress phrase; `buildings`
+ * is the finished one, and one is a prefix of the other.
+ */
+const STILL_WORKING = /fetching |building city|rebuilding |initialising/i;
 
 /**
  * Load `repo` and return once the city for that repository is built and the
@@ -63,10 +75,15 @@ export async function buildCityPage(page, baseUrl, repo, options = {}) {
   throw lastError;
 }
 
-async function loadCity(page, baseUrl, repo, options) {
-  const settleMs = options.settleMs ?? SETTLE_MS;
-  const seed = options.seed ?? '0';
-
+/**
+ * Open the app on `repo` and return once its city is built.
+ *
+ * Exported so nothing has to re-implement the wait. It was copied inline once,
+ * and the copy carried a stale version of {@link STILL_WORKING} that never
+ * matched, so the caller sat out the whole build timeout and started recording
+ * long after the entrance had finished.
+ */
+export async function openCity(page, baseUrl, repo, seed = '0') {
   const url = `${baseUrl.replace(/\/$/, '')}/#repo=${encodeURIComponent(repo)}&seed=${seed}`;
   // `reload` rather than `goto`: navigating to the same URL with only the hash
   // changed does not re-run the page, and a retry must start it over.
@@ -80,8 +97,14 @@ async function loadCity(page, baseUrl, repo, options) {
     status = (await page.textContent('#status').catch(() => '')) ?? '';
     loaded = (await page.textContent('#repo-branch').catch(() => '')) ?? '';
     if (namesRepo(loaded, repo) && !STILL_WORKING.test(status)) break;
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(200);
   }
+  return { status: status.trim(), loaded: loaded.trim(), built: namesRepo(loaded, repo) };
+}
+
+async function loadCity(page, baseUrl, repo, options) {
+  const settleMs = options.settleMs ?? SETTLE_MS;
+  const { status, loaded } = await openCity(page, baseUrl, repo, options.seed ?? '0');
 
   if (!namesRepo(loaded, repo)) {
     throw new Error(

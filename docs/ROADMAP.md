@@ -24,7 +24,9 @@ Tallest building in testing: `test.mp4` (react), `pnpm-lock.yaml` (vue), `uv.loc
 **4. Make the sample represent the repo.**
 three.js: 453 of 1,720 rendered files come from `examples/`, while `src/` — the actual library — gets 32 buildings. vscode renders 798 of 17,013 files (4.7%) with no visible disclosure of the drop from 5,000 selected → 798 rendered. Byte-weighted sampling structurally favors asset directories. Blend count-proportional and byte-proportional allocation per district, guarantee source-directory floors, and state plainly in the UI: "rendered 798 of 17,013 files." Also close the test gap: the largest-remainder allocation path in `worker/sampling.ts` is currently never executed by any test.
 
-**5. Never ship a failing preset.**
+**5. ~~Never ship a failing preset.~~ Reopened once, now closed.** This was ticked off when the `torvalds/linux` chip was removed, but `rust-lang/rust` was left in the header with exactly the same failure: "GitHub returned more data than RepoCity can process safely." A first-time visitor clicking a chip in the app's own header got an error. All seven chips were then loaded one by one; only that one fails, and it is gone. Two others appeared to fail during the check and did not — the verification itself had tripped the Worker's 3-requests-per-60s actor limit, which is worth remembering before reading any batch result as a product defect. Linux-scale repositories remain unsupported; the original text follows.
+
+
 The `torvalds/linux` chip — in the app's own header — fails with "GitHub returned more data than RepoCity can process safely," and the reason only appears at the bottom of the page while the status pill truncates mid-sentence. Either make linux-scale repos work (paginated fallback traversal already exists; raise the payload strategy or pre-bake a cached snapshot) or remove the chip. Error UX: full reason in the visible status, don't clobber the user's typed input on failure, and offer a retry.
 
 ## Phase 2 — The feel
@@ -53,7 +55,9 @@ What was actually wrong is that every public image — the og:image, the README 
 
 ## Phase 4 — The launch
 
-**15. README with proof.** Hero image (done), then a 15-second GIF: type a repo → skyline assembles → click a tower → explorer syncs. Badges, live demo link, and a "gallery" section of famous repos as cities.
+**15. ~~README with proof.~~ Done.** The README leads with a 7-second recording of the entrance — `mrdoob/three.js` loading, the skyline assembling, the camera sweeping onto the resting shot — produced by `npm run capture:gif` so it can be re-recorded whenever the renderer changes. Badges and the gallery are in place. The still hero was dropped: a second picture of the same city directly under the animation was redundant weight.
+
+Two things the recording exposed. `rust-lang/rust`, the repository originally wanted for it, does not load at all — see item 5. And the capture tooling's "is it still building?" test matched `/building/i`, which also matches the *success* message "5,000 buildings from a deterministic sample", so every capture in the project had been sitting out the full 180-second build timeout before continuing on a secondary check. Loading flask went from 261 seconds to 3 once that was corrected. The GIF recorder had copied that wait inline rather than sharing it, which is how the bug survived being fixed once; the wait now lives in one place.
 
 **16. Deploy to repo.city.** Workers Paid plan, `GITHUB_TOKEN` secret, WAF rules per the threat model, custom domain, and the og:image endpoint. The share URL (`#repo=…&commit=…&seed=…`) is already deterministic — every shared link reproduces the exact city, which is the viral loop.
 

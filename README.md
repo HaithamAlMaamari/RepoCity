@@ -5,7 +5,9 @@
 
 **Explore any public GitHub repository as an interactive 3D city.** Files become buildings, directories become districts, and each language lights its own skyline.
 
-![RepoCity rendering a repository as a neon 3D city](docs/media/hero.png)
+![Loading mrdoob/three.js: the skyline assembles and the camera sweeps onto the resting shot](docs/media/tour.gif)
+
+<sub>Loading `mrdoob/three.js` — 5,799 files, sampled to 5,000 buildings. Recorded with `npm run capture:gif`.</sub>
 
 ## Features
 
@@ -64,13 +66,34 @@ The architecture decision record lives in [`docs/architecture/ADR-001-github-dat
 
 ## Project Structure
 
-- `src/data` — GitHub ingestion, contract validation, and repository modeling
-- `src/city` — treemap layout, districts, buildings, palettes, file classification, per-district building typologies, and the shared facade shader
-- `src/effects` — streets, ground and flying traffic, billboards, atmosphere, sky, and particles
-- `src/explore` — the file-explorer model backing Explore mode
-- `src/core` — camera, seeded randomness, and URL state
-- `worker` — Cloudflare Worker: GitHub validation, traversal, sampling, caching, rate limiting
-- `docs` — architecture decisions and the security threat model
+Two deployables, one repository. `worker/` is the backend and the only thing that talks to GitHub; `src/` is the browser frontend and only ever calls the same-origin API. Nothing is shared between them at runtime — the validators are deliberately written twice, once on each side of the trust boundary.
+
+**Backend — `worker/`** (Cloudflare Worker, ~1,200 lines)
+
+| | |
+|---|---|
+| `index.ts` | request routing, rate limiting, caching, security headers |
+| `github.ts` | GitHub REST calls, hand-written response validation, bounded traversal |
+| `sampling.ts` | choosing which files to render when a repository is too large |
+
+**Frontend — `src/`** (TypeScript + Three.js, ~9,000 lines)
+
+| | |
+|---|---|
+| `data/` | ingestion from the API, contract validation, repository modeling |
+| `city/` | treemap layout, districts, file classification, building typologies, the shared facade shader |
+| `effects/` | streets, ground and flying traffic, billboards, atmosphere, sky, particles |
+| `explore/` | the file-explorer model behind Explore mode |
+| `core/` | camera framing and entrance, seeded randomness, URL state |
+| `main.ts` | scene bootstrap and UI wiring |
+
+**Supporting**
+
+| | |
+|---|---|
+| `scripts/` | developer capture and measurement tools; not shipped |
+| `docs/` | roadmap, architecture decision record, threat model |
+| `public/`, `index.html` | static assets and the app shell |
 
 ## Quality Checks
 
@@ -84,15 +107,16 @@ npm run ci          # the full release gate CI runs
 
 `npm run ci` reproduces the GitHub Actions gate: lint, unit tests, the Workerd runtime suite, both TypeScript targets, a production build, a high-severity dependency audit, and a Cloudflare deployment dry run. The Workerd suite validates real Worker bindings, request signals, streamed body limits, and Cache API behavior without production credentials or external network access.
 
-Three developer tools sit deliberately outside the gate, because they need a GPU and network access:
+Four developer tools sit deliberately outside the gate, because they need a GPU and network access:
 
 ```sh
 npm run capture <label>   # render the fixture repositories to artifacts/captures/<label>
 npm run measure           # report what the building shader is fed, per building
-npm run capture:media     # regenerate the og:image, README hero, and gallery
+npm run capture:media     # regenerate the og:image and gallery stills
+npm run capture:gif       # re-record the README animation
 ```
 
-All three require `npm run dev` and a local Chrome. Visual changes are verified by comparing two labelled capture runs of the same repositories at pinned commits — a synthetic fixture has given the wrong answer more than once. `capture:media` exists because every image in this README is a picture of the renderer, and a hand-made screenshot silently stops being true the moment the renderer changes.
+All of these require `npm run dev` and a local Chrome. Visual changes are verified by comparing two labelled capture runs of the same repositories at pinned commits — a synthetic fixture has given the wrong answer more than once. `capture:media` and `capture:gif` exist because every image in this README is a picture of the renderer, and a hand-made screenshot silently stops being true the moment the renderer changes. `capture:gif` additionally needs `ffmpeg` on PATH.
 
 ## Security
 
