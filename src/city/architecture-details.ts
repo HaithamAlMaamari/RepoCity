@@ -558,7 +558,7 @@ ${FACADE_GLSL}`)
         }`)
       .replace('#include <fog_fragment>', fogFragmentGLSL('vCrownWorld', 'rcCrownAssistKey', 'rcCrownGlowKey'));
   };
-  material.customProgramCacheKey = () => 'repocity-crowns-v6';
+  material.customProgramCacheKey = () => 'repocity-crowns-v7';
   return material;
 }
 

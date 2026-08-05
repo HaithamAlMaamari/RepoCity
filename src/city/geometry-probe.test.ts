@@ -49,13 +49,34 @@ describe('building proportions', () => {
     expect(drift).toBeLessThan(6);
   });
 
+  /*
+   * The bound moved from 10 to 13 when HEIGHT_CURVE was softened from 3.0 to
+   * 2.3, and that is a deliberate trade rather than a regression absorbed
+   * quietly. A gentler curve raises the median building from 14 to 19 units on
+   * the same plots, so the median gets slimmer — but it also brings the
+   * tallest-to-median ratio down from 4.9x to 3.6x, which is what stops a
+   * large repository reading as spikes. Rendered against react before
+   * accepting: the skyline is visibly more even, and the density hides the
+   * extra slimness the number reports.
+   */
   it('does not build needles', () => {
     const s = distribution(cityFor(5000).report.samples.map((x) => x.slenderness));
-    expect(s.p50).toBeLessThan(10);
-    expect(s.p95).toBeLessThan(20);
-    expect(s.p99).toBeLessThan(25);
+    expect(s.p50).toBeLessThan(13);
+    expect(s.p95).toBeLessThan(22);
+    expect(s.p99).toBeLessThan(27);
     // Loose: guards the pathological tail without pinning squarify's heuristic.
     expect(s.max).toBeLessThan(60);
+  });
+
+  /*
+   * The other half of that trade, asserted so it cannot be undone by accident:
+   * a handful of landmarks should stand over the mass, not spike out of it.
+   */
+  it('keeps the tallest buildings a landmark rather than a spike', () => {
+    const source = cityFor(5000).report.samples.filter((s) => s.category === 'source');
+    const h = distribution(source.map((s) => s.totalHeight));
+    expect(h.p99 / h.p50).toBeGreaterThan(2.5);
+    expect(h.p99 / h.p50).toBeLessThan(4.2);
   });
 
   /*

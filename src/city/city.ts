@@ -31,7 +31,7 @@ import { classifyBuilding, detectLanguage, isCodeLanguage, type BuildingCategory
 import { BLOCK_TYPOLOGY, districtKeyOf, typologyFor, type Typology } from './typology';
 import {
   FACADE_GLSL, fogFragmentGLSL, glslFloat as f,
-  FLOOR_SHIFT_RANGE, planSpan, RIM_BRIGHT, WINDOW_EMISSIVE,
+  FLOOR_SHIFT_RANGE, planSpan, RIM_BRIGHT, ROOF_FLOOR_DEPOT, ROOF_FLOOR_SOURCE, WINDOW_EMISSIVE,
 } from './facade-shader';
 
 export interface Building {
@@ -210,15 +210,23 @@ const FRAG_EMISSIVE = /* glsl */ `
   float windowGain = rcDistantGain( assist ) * mix( 1.0, 0.42, depot );
   vec3 windowGlow = winColor * windowShape * ${f(WINDOW_EMISSIVE)} * windowGain;
 
-  /* ---- facade luminance floor: distant blocks keep language colour ---- */
-  float up = clamp( vLP.y + 0.5, 0.0, 1.0 );
-  /* Normalised for the same reason the windows are: at full assist this term
-     IS the building's silhouette, so leaving it raw would reintroduce the
-     magenta-reads-dimmer gap in the one place a distant city is read from. */
+  /* ---- roof luminance floor ----
+   *
+   * ROOFS ONLY. A wall is black and its colour comes from its windows; that is
+   * the whole visual premise, and this term used to break it. It washed the
+   * entire side surface in the language colour at 5% rising to 19%, gated on
+   * rcAssist so it was meant to affect only buildings too small to resolve —
+   * but that value is 0.00 for a small repository and 1.00 for a large one, so
+   * in practice every wall in a mid or large city was painted. Combined with
+   * the window grid resolving to its average at the same threshold, those
+   * buildings read as solid blocks of colour rather than as lit windows.
+   *
+   * A roof is different: there are no windows up there to carry it, so without
+   * a floor a wide depot cap is a black hole punched in a distant city. That
+   * is a real need and it is all this keeps.
+   */
   vec3 facadeTint = rcNormalizeLuma( mix( vBase, winTint, 0.45 ) );
-  /* Depots are wide roofs seen from above: without a roof wash they read as
-     black holes in a distant city, so their tops get a stronger floor. */
-  float facadeAmt = assist * ( sideMask * ( 0.05 + 0.14 * up ) + topMask * mix( 0.09, 0.30, depot ) );
+  float facadeAmt = assist * topMask * mix( ${f(ROOF_FLOOR_SOURCE)}, ${f(ROOF_FLOOR_DEPOT)}, depot );
   vec3 facadeGlow = facadeTint * facadeAmt;
 
   /* ---- neon rim on the top edge of every wall ---- */
@@ -300,13 +308,18 @@ const DEPOT_MAX_HEIGHT = 5.6;
  * needing a separate tier.
  *
  * At 2.0 the 99th-percentile building was only about three times the median,
- * so the skyline's top edge came out nearly flat and nothing in the city read
- * as a landmark. At 3.0 the mass sits lower and the tallest few genuinely
- * tower over it. The curve is still strictly increasing, so "height is
- * file-size rank" is exactly as true as it was — only the shape of the ramp
- * changed, never its ordering.
+ * so the skyline's top edge came out nearly flat and nothing read as a
+ * landmark. 3.0 fixed that and overshot: it left the tallest at 72 while
+ * dropping the median to 14, and on a five-thousand-file repository — where
+ * buildings are already four times more slender than in a small one — the
+ * result read as spikes rather than towers. 2.3 puts the median back near 19,
+ * so the landmarks stand about 3.7x over the mass instead of 4.9x.
+ *
+ * The curve is strictly increasing at any exponent, so "height is file-size
+ * rank among source files" is exactly as true as it ever was — only the shape
+ * of the ramp changes, never its ordering.
  */
-const HEIGHT_CURVE = 3.0;
+const HEIGHT_CURVE = 2.3;
 
 /**
  * Smallest share of a building handed to its cap.
@@ -540,7 +553,7 @@ export function buildCity(cells: LayoutCell[]): CityData {
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_EMISSIVE)
       .replace('#include <fog_fragment>', fogFragmentGLSL('vWP', 'rcAssistKey', 'rcGlowKey'));
   };
-  material.customProgramCacheKey = () => 'repocity-buildings-v7';
+  material.customProgramCacheKey = () => 'repocity-buildings-v9';
 
   const mesh = new THREE.InstancedMesh(geo, material, n);
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);

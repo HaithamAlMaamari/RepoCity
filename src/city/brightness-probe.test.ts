@@ -12,6 +12,8 @@ import type { Building } from './city';
 import {
   ASSIST_FULL_PX,
   ASSIST_NONE_PX,
+  AMBER_KNEE,
+  FLOOR_SHIFT_RANGE,
   WINDOW_LUMA_MAX_GAIN,
   WINDOW_LUMA_MIN_GAIN,
 } from './facade-shader';
@@ -81,6 +83,40 @@ describe('windowTint', () => {
       const { et } = windowTint(languageEmissiveBoost(cool), 0);
       expect(et).toBe(0);
     }
+  });
+
+  /*
+   * The per-floor jitter varies a facade's shade; it must not change which
+   * language the facade claims to be. It used to: markdown sat at 0.72 on the
+   * ramp and the jitter reached 0.94, past the amber knee, so 14% of a real
+   * repository's buildings (markdown, rust and html) showed magenta floors and
+   * amber floors on the same wall. Amber means JavaScript or Java.
+   */
+  it('never lets the per-floor jitter carry a facade into amber', () => {
+    for (const lang of ['markdown', 'rust', 'html', 'python', 'ruby', 'typescript', 'json']) {
+      const warmth = languageEmissiveBoost(lang);
+      for (let step = 0; step <= 20; step++) {
+        const { et } = windowTint(warmth, (FLOOR_SHIFT_RANGE * step) / 20);
+        expect(et).toBeLessThanOrEqual(AMBER_KNEE + 1e-9);
+      }
+    }
+  });
+
+  it('keeps the hero languages in amber whatever the jitter does', () => {
+    for (const hero of ['javascript', 'java']) {
+      const warmth = languageEmissiveBoost(hero);
+      for (let step = 0; step <= 20; step++) {
+        const { et } = windowTint(warmth, (FLOOR_SHIFT_RANGE * step) / 20);
+        expect(et).toBeGreaterThanOrEqual(AMBER_KNEE - 1e-9);
+      }
+    }
+  });
+
+  it('still varies shade within a language zone', () => {
+    // Cyan-zone languages have the most room, and should still get variety.
+    const flat = windowTint(languageEmissiveBoost('typescript'), 0).et;
+    const shifted = windowTint(languageEmissiveBoost('typescript'), FLOOR_SHIFT_RANGE).et;
+    expect(shifted - flat).toBeGreaterThan(0.1);
   });
 
   it('is monotonic in warmth', () => {

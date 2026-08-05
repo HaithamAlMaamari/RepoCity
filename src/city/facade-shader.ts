@@ -150,6 +150,31 @@ export const TINT_OFFSET = 0.1;
 export const FLOOR_SHIFT_RANGE = 0.22;
 
 /**
+ * Ramp position where magenta gives way to the amber the hero languages own.
+ *
+ * It is an identity boundary, not just a colour stop: below it a facade reads
+ * as "some other language", above it as JavaScript or Java. The per-floor
+ * jitter must therefore never carry a building across it. It used to —
+ * `markdown` sat at 0.72 and the jitter reached 0.94, so 14% of react's
+ * buildings (markdown, rust and html) showed magenta floors and amber floors
+ * on the same wall. That became possible only once {@link TINT_OFFSET} was
+ * fixed and amber was reachable at all; before that the ramp stopped at this
+ * knee and nothing could cross it.
+ */
+export const AMBER_KNEE = 0.9;
+
+/**
+ * Emissive floor applied to ROOFS at overview distance, per category.
+ *
+ * Only roofs. Walls are black and take their colour from their windows — that
+ * is the premise the whole facade is built on. A roof has no windows to carry
+ * it, so at distance a wide cap would otherwise read as a hole punched in the
+ * city; depots are mostly roof seen from above, which is why they need more.
+ */
+export const ROOF_FLOOR_SOURCE = 0.09;
+export const ROOF_FLOOR_DEPOT = 0.3;
+
+/**
  * Luminance every window colour is normalised toward, and how far the
  * normalisation may push.
  *
@@ -347,13 +372,22 @@ vec3 rcNormalizeLuma( vec3 c ) {
  * magenta. \`rampPos\` comes back for the rim, which tracks the same hue.
  */
 vec3 rcWindowTint( float warmth, float shift, out float rampPos ) {
-  float et = clamp(
-    ( warmth - ${f(TINT_OFFSET)} ) / ${f(1 - TINT_OFFSET)} + shift, 0.0, 1.0 );
+  float base = clamp(
+    ( warmth - ${f(TINT_OFFSET)} ) / ${f(1 - TINT_OFFSET)}, 0.0, 1.0 );
+  /*
+   * The jitter varies a facade's shade; it must never change which language
+   * the facade claims to be. Scaling it to the room left inside the building's
+   * own zone keeps that true without a hard clamp piling floors up on the
+   * boundary — a markdown wall stays entirely magenta, and a JavaScript wall
+   * entirely amber.
+   */
+  float headroom = base < ${f(AMBER_KNEE)} ? ${f(AMBER_KNEE)} - base : 1.0 - base;
+  float et = base + shift * min( 1.0, headroom / ${f(FLOOR_SHIFT_RANGE)} );
   vec3 coolC = vec3( 0.06, 0.62, 0.82 );
   vec3 magC  = vec3( 0.82, 0.12, 0.46 );
   vec3 warmC = vec3( 0.82, 0.46, 0.14 );
-  float t1 = clamp( et / 0.9, 0.0, 1.0 );
-  float t2 = clamp( ( et - 0.9 ) / 0.1, 0.0, 1.0 );
+  float t1 = clamp( et / ${f(AMBER_KNEE)}, 0.0, 1.0 );
+  float t2 = clamp( ( et - ${f(AMBER_KNEE)} ) / ${f(1 - AMBER_KNEE)}, 0.0, 1.0 );
   rampPos = et;
   return mix( mix( coolC, magC, t1 ), warmC, t2 );
 }
