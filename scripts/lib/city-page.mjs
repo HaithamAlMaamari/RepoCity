@@ -43,11 +43,35 @@ const STILL_WORKING = /fetching|building|rebuilding|initial/i;
  *         repository — never returns a page in an unverified state.
  */
 export async function buildCityPage(page, baseUrl, repo, options = {}) {
+  const attempts = options.attempts ?? 2;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await loadCity(page, baseUrl, repo, options);
+    } catch (error) {
+      lastError = error;
+      /*
+       * The app occasionally finishes its start-up auto-build and never picks
+       * up the requested hash, leaving an unrelated city on screen. It is
+       * intermittent and reloading clears it, so one retry is worth more than
+       * a flaky tool — but the verification below is what makes retrying safe,
+       * because a wrong city is detected rather than saved.
+       */
+      if (attempt < attempts) await page.waitForTimeout(1500);
+    }
+  }
+  throw lastError;
+}
+
+async function loadCity(page, baseUrl, repo, options) {
   const settleMs = options.settleMs ?? SETTLE_MS;
   const seed = options.seed ?? '0';
 
   const url = `${baseUrl.replace(/\/$/, '')}/#repo=${encodeURIComponent(repo)}&seed=${seed}`;
+  // `reload` rather than `goto`: navigating to the same URL with only the hash
+  // changed does not re-run the page, and a retry must start it over.
   await page.goto(url, { waitUntil: 'load' });
+  await page.reload({ waitUntil: 'load' });
 
   const started = Date.now();
   let status = '';

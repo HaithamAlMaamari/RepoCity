@@ -56,7 +56,8 @@
     "measure": "node scripts/measure-brightness.mjs",
     "worker:types": "wrangler types",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "capture:media": "node scripts/capture-media.mjs"
   },
   "dependencies": {
     "three": "^0.171.0"
