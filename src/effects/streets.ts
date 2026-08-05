@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import type { DistrictRect, PlotRect, StreetSegment } from '../types';
+import type { LayoutCorridor } from '../city/layout';
 import { makeRadialGlow } from './textures';
 import { FACADE_GLSL, fogFragmentGLSL } from '../city/facade-shader';
 
@@ -17,10 +18,62 @@ export interface StreetNetwork {
   dispose(): void;
 }
 
+/**
+ * Turn the road strips the treemap reserved into street segments.
+ *
+ * Pure, and separated from the mesh building so the network can be asserted
+ * without a WebGL context or a DOM — the old derivation could not be tested at
+ * all, which is part of why nobody noticed it was producing one interior
+ * street for a five-thousand-file city.
+ *
+ * Two strips of the same width that share a line and touch are joined, because
+ * adjacent directories each reserve their own ring and the pair is physically
+ * one street; leaving them split would double the segment count and give
+ * traffic two half-roads to choose between instead of one through route.
+ */
+export function planStreets(corridors: readonly LayoutCorridor[]): StreetSegment[] {
+  const segments = corridors
+    .filter((c) => c.w > 0 && c.d > 0)
+    .map((c): StreetSegment => (c.axis === 'x'
+      ? { x1: c.x, z1: c.z + c.d / 2, x2: c.x + c.w, z2: c.z + c.d / 2, width: c.d, axis: 'x', kind: 'internal' }
+      : { x1: c.x + c.w / 2, z1: c.z, x2: c.x + c.w / 2, z2: c.z + c.d, width: c.w, axis: 'z', kind: 'internal' }));
+
+  const byLine = new Map<string, StreetSegment[]>();
+  for (const s of segments) {
+    // Quantised so two rings that abut are recognised as collinear.
+    const line = s.axis === 'x'
+      ? `x:${s.z1.toFixed(2)}:${s.width.toFixed(2)}`
+      : `z:${s.x1.toFixed(2)}:${s.width.toFixed(2)}`;
+    const bucket = byLine.get(line);
+    if (bucket) bucket.push(s); else byLine.set(line, [s]);
+  }
+
+  const merged: StreetSegment[] = [];
+  for (const bucket of byLine.values()) {
+    const along = (s: StreetSegment): [number, number] => s.axis === 'x' ? [s.x1, s.x2] : [s.z1, s.z2];
+    bucket.sort((a, b) => along(a)[0] - along(b)[0]);
+    let [start, end] = along(bucket[0]);
+    const flush = (): void => {
+      const head = bucket[0];
+      merged.push(head.axis === 'x'
+        ? { ...head, x1: start, x2: end }
+        : { ...head, z1: start, z2: end });
+    };
+    for (let i = 1; i < bucket.length; i++) {
+      const [s1, s2] = along(bucket[i]);
+      if (s1 <= end + 0.05) end = Math.max(end, s2);
+      else { flush(); start = s1; end = s2; }
+    }
+    flush();
+  }
+  return merged;
+}
+
 export function buildStreetNetwork(
   districts: DistrictRect[],
   cityBounds: { minX: number; maxX: number; minZ: number; maxZ: number },
   plots: readonly PlotRect[] = [],
+  corridors: readonly LayoutCorridor[] = [],
 ): StreetNetwork {
   const group = new THREE.Group();
   const streets: StreetSegment[] = [];
@@ -86,60 +139,24 @@ export function buildStreetNetwork(
     disposables.push(plotGeo, plotMat);
   }
 
-  if (districts.length === 0) {
-    // Repositories with only root-level files still need a legible road grid.
+  /*
+   * The network is exactly what the treemap reserved. A repository with no
+   * directories reserves nothing, so it still needs a legible grid of its own.
+   */
+  const internalStreets = planStreets(corridors)
+    .filter((street) => streetLength(street) >= 2 && street.width >= 0.4);
+  if (internalStreets.length === 0) {
     const width = Math.max(3.0, Math.min(maxX - minX, maxZ - minZ) * 0.045);
     const xMid = (minX + maxX) / 2;
     const zMid = (minZ + maxZ) / 2;
-    streets.push(
-      { x1: minX, z1: zMid - width * 1.5, x2: maxX, z2: zMid - width * 1.5, width, axis: 'x' },
-      { x1: minX, z1: zMid + width * 1.5, x2: maxX, z2: zMid + width * 1.5, width, axis: 'x' },
-      { x1: xMid - width * 1.5, z1: minZ, x2: xMid - width * 1.5, z2: maxZ, width, axis: 'z' },
-      { x1: xMid + width * 1.5, z1: minZ, x2: xMid + width * 1.5, z2: maxZ, width, axis: 'z' },
-    );
-  } else {
-    const zBands = mergeBands(districts.map((d) => [d.z, d.z + d.d] as [number, number]));
-    const xBands = mergeBands(districts.map((d) => [d.x, d.x + d.w] as [number, number]));
-    for (const [z1, z2] of gaps(zBands, minZ, maxZ)) {
-      const width = z2 - z1;
-      if (width < 0.15) continue;
-      streets.push({ x1: minX, z1: (z1 + z2) / 2, x2: maxX, z2: (z1 + z2) / 2, width, axis: 'x' });
-    }
-    for (const [x1, x2] of gaps(xBands, minX, maxX)) {
-      const width = x2 - x1;
-      if (width < 0.15) continue;
-      streets.push({ x1: (x1 + x2) / 2, z1: minZ, x2: (x1 + x2) / 2, z2: maxZ, width, axis: 'z' });
-    }
-    streets.push(...buildDistrictCorridors(districts));
-  }
-
-  // If district bands completely cover the footprint, their gaps produce no
-  // roads. Keep four readable arterials so traffic still has a physical path.
-  if (streets.length === 0) {
-    const width = Math.max(3.0, Math.min(maxX - minX, maxZ - minZ) * 0.045);
-    const xMid = (minX + maxX) / 2;
-    const zMid = (minZ + maxZ) / 2;
-    streets.push(
-      { x1: minX, z1: zMid - width * 1.5, x2: maxX, z2: zMid - width * 1.5, width, axis: 'x' },
-      { x1: minX, z1: zMid + width * 1.5, x2: maxX, z2: zMid + width * 1.5, width, axis: 'x' },
-      { x1: xMid - width * 1.5, z1: minZ, x2: xMid - width * 1.5, z2: maxZ, width, axis: 'z' },
-      { x1: xMid + width * 1.5, z1: minZ, x2: xMid + width * 1.5, z2: maxZ, width, axis: 'z' },
+    internalStreets.push(
+      { x1: minX, z1: zMid - width * 1.5, x2: maxX, z2: zMid - width * 1.5, width, axis: 'x', kind: 'internal' },
+      { x1: minX, z1: zMid + width * 1.5, x2: maxX, z2: zMid + width * 1.5, width, axis: 'x', kind: 'internal' },
+      { x1: xMid - width * 1.5, z1: minZ, x2: xMid - width * 1.5, z2: maxZ, width, axis: 'z', kind: 'internal' },
+      { x1: xMid + width * 1.5, z1: minZ, x2: xMid + width * 1.5, z2: maxZ, width, axis: 'z', kind: 'internal' },
     );
   }
-
-  const edgeClearance = ringWidth * 1.25;
-  const clippedInternalStreets = clipStreetsToPlots(streets
-    .filter((street) => street.axis === 'x'
-      ? street.z1 > minZ + edgeClearance && street.z1 < maxZ - edgeClearance
-      : street.x1 > minX + edgeClearance && street.x1 < maxX - edgeClearance)
-    .map((street) => ({ ...street, kind: 'internal' as const })), plots);
-  const internalStreets = [...new Map(clippedInternalStreets
-    .filter((street) => streetLength(street) >= 2 && street.width >= 0.9)
-    .filter((street) => street.axis === 'x'
-      ? street.x1 > minX + edgeClearance && street.x2 < maxX - edgeClearance
-      : street.z1 > minZ + edgeClearance && street.z2 < maxZ - edgeClearance)
-    .map((street) => [streetKey(street), street])).values()];
-  streets.splice(0, streets.length, ...ringStreets, ...internalStreets);
+  streets.push(...ringStreets, ...internalStreets);
 
   /* ---- road surface (dark) ---- */
   const roadPos: number[] = [];
@@ -382,120 +399,8 @@ function districtColor(name: string, target: THREE.Color): THREE.Color {
   return target.setHex(palette[(hash >>> 0) % palette.length]);
 }
 
-export function buildDistrictCorridors(districts: readonly DistrictRect[]): StreetSegment[] {
-  const corridors: StreetSegment[] = [];
-  const seen = new Set<string>();
-  const addPair = (a: DistrictRect, b: DistrictRect) => {
-    const overlapX1 = Math.max(a.x, b.x);
-    const overlapX2 = Math.min(a.x + a.w, b.x + b.w);
-    const aBottom = a.z + a.d;
-    const bBottom = b.z + b.d;
-    const zGap = aBottom <= b.z ? [aBottom, b.z] : bBottom <= a.z ? [bBottom, a.z] : null;
-    if (zGap && overlapX2 - overlapX1 >= 4 && zGap[1] - zGap[0] >= 0.15) {
-      const street: StreetSegment = {
-        x1: overlapX1, z1: (zGap[0] + zGap[1]) / 2,
-        x2: overlapX2, z2: (zGap[0] + zGap[1]) / 2,
-        width: Math.min(3, zGap[1] - zGap[0]), axis: 'x',
-      };
-      const key = streetKey(street);
-      if (!seen.has(key)) { seen.add(key); corridors.push(street); }
-    }
-
-    const overlapZ1 = Math.max(a.z, b.z);
-    const overlapZ2 = Math.min(a.z + a.d, b.z + b.d);
-    const aRight = a.x + a.w;
-    const bRight = b.x + b.w;
-    const xGap = aRight <= b.x ? [aRight, b.x] : bRight <= a.x ? [bRight, a.x] : null;
-    if (xGap && overlapZ2 - overlapZ1 >= 4 && xGap[1] - xGap[0] >= 0.15) {
-      const street: StreetSegment = {
-        x1: (xGap[0] + xGap[1]) / 2, z1: overlapZ1,
-        x2: (xGap[0] + xGap[1]) / 2, z2: overlapZ2,
-        width: Math.min(3, xGap[1] - xGap[0]), axis: 'z',
-      };
-      const key = streetKey(street);
-      if (!seen.has(key)) { seen.add(key); corridors.push(street); }
-    }
-  };
-
-  for (const sorted of [
-    [...districts].sort((a, b) => a.z - b.z || a.x - b.x),
-    [...districts].sort((a, b) => a.x - b.x || a.z - b.z),
-  ]) {
-    for (let i = 0; i < sorted.length; i++) {
-      for (let j = i + 1; j < Math.min(sorted.length, i + 9); j++) addPair(sorted[i], sorted[j]);
-    }
-  }
-  return corridors;
-}
-
-function streetKey(street: StreetSegment): string {
-  return `${street.axis}:${street.x1.toFixed(3)}:${street.z1.toFixed(3)}:${street.x2.toFixed(3)}:${street.z2.toFixed(3)}`;
-}
-
 function streetLength(street: StreetSegment): number {
   return street.axis === 'x' ? street.x2 - street.x1 : street.z2 - street.z1;
 }
 
-export function clipStreetsToPlots(streets: readonly StreetSegment[], plots: readonly PlotRect[]): StreetSegment[] {
-  const clipped: StreetSegment[] = [];
-  for (const street of streets) {
-    const blockers: [number, number][] = [];
-    for (const plot of plots) {
-      const occupiedW = Math.max(plot.w, 0.05);
-      const occupiedD = Math.max(plot.d, 0.05);
-      const occupiedX = plot.x + (plot.w - occupiedW) / 2;
-      const occupiedZ = plot.z + (plot.d - occupiedD) / 2;
-      if (street.axis === 'x') {
-        const roadMin = street.z1 - street.width / 2;
-        const roadMax = street.z1 + street.width / 2;
-        if (occupiedZ < roadMax && occupiedZ + occupiedD > roadMin) blockers.push([occupiedX, occupiedX + occupiedW]);
-      } else {
-        const roadMin = street.x1 - street.width / 2;
-        const roadMax = street.x1 + street.width / 2;
-        if (occupiedX < roadMax && occupiedX + occupiedW > roadMin) blockers.push([occupiedZ, occupiedZ + occupiedD]);
-      }
-    }
-    const start = street.axis === 'x' ? street.x1 : street.z1;
-    const end = street.axis === 'x' ? street.x2 : street.z2;
-    let cursor = start;
-    for (const [blockStart, blockEnd] of mergeBands(blockers)) {
-      if (blockStart > cursor + 0.2) clipped.push(streetSlice(street, cursor, Math.min(blockStart, end)));
-      cursor = Math.max(cursor, blockEnd);
-      if (cursor >= end) break;
-    }
-    if (cursor < end - 0.2) clipped.push(streetSlice(street, cursor, end));
-  }
-  return clipped;
-}
-
-function streetSlice(street: StreetSegment, start: number, end: number): StreetSegment {
-  return street.axis === 'x'
-    ? { ...street, x1: start, x2: end }
-    : { ...street, z1: start, z2: end };
-}
-
 /* ---- interval helpers ---- */
-
-function mergeBands(bands: [number, number][]): [number, number][] {
-  if (bands.length === 0) return [];
-  const sorted = [...bands].sort((a, b) => a[0] - b[0]);
-  const merged: [number, number][] = [sorted[0].slice() as [number, number]];
-  for (let i = 1; i < sorted.length; i++) {
-    const last = merged[merged.length - 1];
-    const cur = sorted[i];
-    if (cur[0] <= last[1] + 0.001) last[1] = Math.max(last[1], cur[1]);
-    else merged.push(cur.slice() as [number, number]);
-  }
-  return merged;
-}
-
-function gaps(merged: [number, number][], lo: number, hi: number): [number, number][] {
-  const out: [number, number][] = [];
-  if (merged.length === 0) { out.push([lo, hi]); return out; }
-  if (merged[0][0] > lo + 0.001) out.push([lo, merged[0][0]]);
-  for (let i = 0; i < merged.length - 1; i++) {
-    if (merged[i + 1][0] > merged[i][1] + 0.001) out.push([merged[i][1], merged[i + 1][0]]);
-  }
-  if (merged[merged.length - 1][1] < hi - 0.001) out.push([merged[merged.length - 1][1], hi]);
-  return out;
-}

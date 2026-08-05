@@ -67,7 +67,7 @@ describe('repository land sizing', () => {
     };
 
     const expected = 40 + 4;
-    const cells = buildLayout(root, { width: 200, height: 200, padding: 0.35, depthScale: 0.3 });
+    const { cells } = buildLayout(root, { width: 200, height: 200});
     expect(cells).toHaveLength(expected);
     for (const cell of cells) {
       expect(cell.rect.w).toBeGreaterThan(0);
@@ -76,9 +76,19 @@ describe('repository land sizing', () => {
   });
 
   it('uses the requested land dimensions', () => {
-    const cells = buildLayout(twoFileRoot(1, 3), { width: 60, height: 60, padding: 0, depthScale: 0 });
-    expect(Math.max(...cells.map((cell) => cell.rect.x + cell.rect.w))).toBeCloseTo(60);
-    expect(Math.max(...cells.map((cell) => cell.rect.y + cell.rect.h))).toBeCloseTo(60);
+    const { cells } = buildLayout(twoFileRoot(1, 3), { width: 60, height: 60 });
+    const right = Math.max(...cells.map((cell) => cell.rect.x + cell.rect.w));
+    const bottom = Math.max(...cells.map((cell) => cell.rect.y + cell.rect.h));
+    /*
+     * Plots reach the requested edge bar their own small gutter. Exact
+     * equality held only while that gutter was a configurable amount and this
+     * two-file case set it to zero; it is a fixed share of each plot now, and
+     * the space between groups of files is reserved as road instead.
+     */
+    for (const edge of [right, bottom]) {
+      expect(edge).toBeLessThanOrEqual(60);
+      expect(edge).toBeGreaterThan(60 * 0.97);
+    }
   });
 
   /*
@@ -92,8 +102,8 @@ describe('repository land sizing', () => {
     const area = (cell: { rect: { w: number; h: number } }) => cell.rect.w * cell.rect.h;
 
     for (const [smaller, larger] of [[1, 3], [1, 100], [500, 20_000]] as const) {
-      const cells = buildLayout(twoFileRoot(smaller, larger), {
-        width: 60, height: 60, padding: 0, depthScale: 0,
+      const { cells } = buildLayout(twoFileRoot(smaller, larger), {
+        width: 60, height: 60,
       });
       const byPath = new Map(cells.map((cell) => [cell.node.path, cell]));
       const ratio = area(byPath.get('b.ts')!) / area(byPath.get('a.ts')!);
@@ -108,7 +118,7 @@ describe('repository land sizing', () => {
   });
 
   it(`reports the file's true byte size, not its layout weight`, () => {
-    const cells = buildLayout(twoFileRoot(1, 20_000), { width: 60, height: 60, padding: 0, depthScale: 0 });
+    const { cells } = buildLayout(twoFileRoot(1, 20_000), { width: 60, height: 60});
     /* the explorer shows this, and buildCity ranks heights by it */
     expect(cells.map((cell) => cell.node.size).sort((a, b) => a - b)).toEqual([1, 20_000]);
   });

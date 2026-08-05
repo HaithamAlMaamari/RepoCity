@@ -365,10 +365,11 @@ async function loadRepo(
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
     const landSize = repositoryLandSize(result.selection.returnedFiles);
-    const layoutPadding = 0.35;
-    const layoutSize = landSize - 4 + layoutPadding;
-    const cells = buildLayout(result.root, {
-      width: layoutSize, height: layoutSize, padding: layoutPadding, depthScale: 0.3,
+    // The four units are the margin the perimeter ring runs in; the treemap
+    // gets everything inside it.
+    const layoutSize = landSize - 4;
+    const { cells, corridors } = buildLayout(result.root, {
+      width: layoutSize, height: layoutSize,
     });
     if (controller.signal.aborted || sequence !== loadSequence) return;
 
@@ -406,7 +407,7 @@ async function loadRepo(
     const districts = buildDistrictRects(cells);
     const footprint = districtFootprint(districts, b);
     const plots = cells.map((cell) => ({ x: cell.rect.x, z: cell.rect.y, w: cell.rect.w, d: cell.rect.h }));
-    streetNet = buildStreetNetwork(districts, footprint, plots);
+    streetNet = buildStreetNetwork(districts, footprint, plots, corridors);
     cityRoot.add(streetNet.group);
 
     /* ── ground traffic ── */

@@ -16,8 +16,8 @@ function cityFor(files: number, seed = 1) {
   const land = repositoryLandSize(files);
   const padding = 0.35;
   // The same call main.ts makes.
-  const cells = buildLayout(generateRepoTree({ files, seed }), {
-    width: land - 4 + padding, height: land - 4 + padding, padding, depthScale: 0.3,
+  const { cells } = buildLayout(generateRepoTree({ files, seed }), {
+    width: land - 4 + padding, height: land - 4 + padding,
   });
   const city = buildCity(cells);
   return { cells, city, report: probeGeometry(city.buildings, city.bounds) };
@@ -58,8 +58,15 @@ describe('building proportions', () => {
     expect(s.max).toBeLessThan(60);
   });
 
-  it('puts buildings on most of the land', () => {
-    expect(cityFor(5000).report.coverage).toBeGreaterThan(0.5);
+  /*
+   * Buildings cover less ground than they used to, on purpose: roads are now
+   * reserved during layout and claim about a quarter of the city. Before that
+   * the street network was inferred from leftovers and produced one to three
+   * interior streets, so effectively none of the land was road. This guards
+   * against the plots being squeezed out, not against roads existing.
+   */
+  it('puts buildings on a healthy share of the land', () => {
+    expect(cityFor(5000).report.coverage).toBeGreaterThan(0.4);
   });
 });
 
@@ -74,7 +81,7 @@ describe('plot area', () => {
    */
   it('gives identical files the same plot wherever they sit in the tree', () => {
     const { root, shallowPath, deepPath } = generateDepthProbeTree();
-    const cells = buildLayout(root, { width: 236, height: 236, padding: 0.35, depthScale: 0.3 });
+    const { cells } = buildLayout(root, { width: 236, height: 236});
     const area = (path: string): number => {
       const cell = cells.find((c) => c.node.path === path);
       if (!cell) throw new Error(`missing cell for ${path}`);
