@@ -26,8 +26,10 @@ Every city is generated purely from repository data, so a repository's language 
 |---|---|
 | **[facebook/react](https://github.com/facebook/react)** — JavaScript amber and Rust magenta, with the compiler's `build_hir.rs` as the tallest source file | **[vuejs/vue](https://github.com/vuejs/vue)** — almost entirely TypeScript, so the city reads cyan end to end |
 | ![The React repository as a 3D city](docs/media/react.jpg) | ![The Vue repository as a 3D city](docs/media/vue.jpg) |
-| **[pallets/flask](https://github.com/pallets/flask)** — Python magenta, a small dense downtown with room to breathe | **Try your own** — type any `owner/repo`, then share the URL |
-| ![The Flask repository as a 3D city](docs/media/flask.jpg) | The share URL pins the commit SHA and the presentation seed, so whoever opens it sees the identical city — same buildings, same traffic, same stars. |
+| **[pallets/flask](https://github.com/pallets/flask)** — Python magenta, a small dense downtown with room to breathe | **[HaithamAlMaamari/RepoCity](https://github.com/HaithamAlMaamari/RepoCity)** — this repository rendering itself: TypeScript cyan, docs in magenta, `main.ts` the tallest source file |
+| ![The Flask repository as a 3D city](docs/media/flask.jpg) | ![RepoCity's own repository as a 3D city](docs/media/repocity.jpg) |
+
+Type any `owner/repo` to build your own. The share URL pins the commit SHA and the presentation seed, so whoever opens it sees the identical city — same buildings, same traffic, same stars.
 
 ## Quick Start
 

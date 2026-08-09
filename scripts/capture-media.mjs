@@ -39,6 +39,7 @@ const TARGETS = [
   { key: 'react', repo: 'facebook/react', out: 'docs/media/react.jpg', width: 1200, height: 630, type: 'jpeg' },
   { key: 'vue', repo: 'vuejs/vue', out: 'docs/media/vue.jpg', width: 1200, height: 630, type: 'jpeg' },
   { key: 'flask', repo: 'pallets/flask', out: 'docs/media/flask.jpg', width: 1200, height: 630, type: 'jpeg' },
+  { key: 'self', repo: 'HaithamAlMaamari/RepoCity', out: 'docs/media/repocity.jpg', width: 1200, height: 630, type: 'jpeg' },
 ];
 
 const JPEG_QUALITY = 88;
