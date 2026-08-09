@@ -50,10 +50,11 @@ If your change alters what the city looks like, finish by running `npm run captu
 ## Where things live
 
 - `src/data` — GitHub ingestion, contract validation, repository modeling
-- `src/city` — treemap layout, districts, buildings, palettes, file classification
+- `src/city` — treemap layout, districts, buildings, palettes, file classification, the selection marker
 - `src/effects` — streets, traffic, billboards, atmosphere, sky, particles
 - `src/explore` — the file-explorer model behind Explore mode
-- `src/core` — camera, seeded randomness, URL state
+- `src/core` — camera framing, viewpoint selection, seeded randomness, URL state
+- `scripts` — capture and measurement tools; developer-only, not shipped
 - `worker` — Cloudflare Worker: validation, traversal, sampling, caching, rate limiting
 - `docs` — architecture decisions, threat model, roadmap
 

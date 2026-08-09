@@ -78,15 +78,15 @@ Two deployables, one repository. `worker/` is the backend and the only thing tha
 | `github.ts` | GitHub REST calls, hand-written response validation, bounded traversal |
 | `sampling.ts` | choosing which files to render when a repository is too large |
 
-**Frontend — `src/`** (TypeScript + Three.js, ~9,000 lines)
+**Frontend — `src/`** (TypeScript + Three.js, ~9,700 lines)
 
 | | |
 |---|---|
 | `data/` | ingestion from the API, contract validation, repository modeling |
-| `city/` | treemap layout, districts, file classification, building typologies, the shared facade shader |
+| `city/` | treemap layout, districts, file classification, building typologies, the shared facade shader, the selection marker |
 | `effects/` | streets, ground and flying traffic, billboards, atmosphere, sky, particles |
 | `explore/` | the file-explorer model behind Explore mode |
-| `core/` | camera framing and entrance, seeded randomness, URL state |
+| `core/` | camera framing and entrance, viewpoint selection, seeded randomness, URL state |
 | `main.ts` | scene bootstrap and UI wiring |
 
 **Supporting**
