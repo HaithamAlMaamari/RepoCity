@@ -18,6 +18,8 @@ import type { FetchResult } from './data/github';
 import { buildLayout, repositoryLandSize } from './city/layout';
 import { buildCity, tallestSourceBuilding } from './city/city';
 import type { CityData, Building } from './city/city';
+import { createSelectionMarker, type SelectionMarker } from './city/selection-marker';
+import { focusCameraPosition } from './core/focus';
 import { buildRooftops } from './city/rooftops';
 import type { Rooftops } from './city/rooftops';
 import { buildDistrictRects, districtFootprint } from './city/districts';
@@ -120,6 +122,7 @@ let controls: OrbitControls;
 
 /* ═══ City state (per repo) ═════════════════════════════ */
 let cityData: CityData | null = null;
+let selectionMarker: SelectionMarker | null = null;
 let rooftops: Rooftops | null = null;
 let streetNet: StreetNetwork | null = null;
 let traffic: TrafficStreaks | null = null;
@@ -399,6 +402,10 @@ async function loadRepo(
     cityRoot.add(cityData.mesh);
     cityRoot.add(cityData.details.group);
 
+    /* ── selection reticle ── */
+    selectionMarker = createSelectionMarker();
+    cityRoot.add(selectionMarker.object);
+
     /* ── rooftop beacons ── */
     rooftops = buildRooftops(cityData.buildings, cityData.maxHeight);
     cityRoot.add(rooftops.group);
@@ -606,6 +613,7 @@ function teardown(): void {
   window.clearTimeout(framingRefreshTimer);
 
   if (cityData) { cityData.dispose(); cityData = null; }
+  if (selectionMarker) { selectionMarker.dispose(); selectionMarker = null; }
   if (rooftops) { rooftops.dispose(); rooftops = null; }
   if (streetNet) { streetNet.dispose(); streetNet = null; }
   if (traffic) { traffic.dispose(); traffic = null; }
@@ -654,6 +662,7 @@ function animate(): void {
   }
 
   cityData?.update(dt);
+  selectionMarker?.update(dt);
   motionAccumulator += dt;
   if (motionAccumulator >= MOTION_STEP) {
     const motionDt = motionAccumulator;
@@ -875,6 +884,7 @@ function selectBuilding(id: number, options: { focusCamera: boolean; updateUrl: 
   if (!building) return;
   selectedBuildingId = id;
   cityData?.setSelected(id);
+  selectionMarker?.show(building);
   showInfo(building);
   revealTreePath(building.path);
   updateTreeSelection();
@@ -886,6 +896,7 @@ function selectBuilding(id: number, options: { focusCamera: boolean; updateUrl: 
 function clearSelection(updateUrl: boolean): void {
   selectedBuildingId = -1;
   cityData?.setSelected(-1);
+  selectionMarker?.show(null);
   hideInfo();
   selectionStatusEl.textContent = '';
   updateTreeSelection();
@@ -1225,10 +1236,23 @@ function focusSelectedBuilding(): void {
   noteCameraInteraction();
   controls.enabled = true;
   const target = new THREE.Vector3(building.position[0] + cityOffsetX, building.totalHeight * 0.45, building.position[2] + cityOffsetZ);
-  const direction = camera.position.clone().sub(controls.target).normalize();
+  const direction = camera.position.clone().sub(controls.target);
   const distance = Math.max(22, building.totalHeight * 2.4, Math.max(building.scale[0], building.scale[2]) * 5);
+  /*
+   * Walking straight back along the current view direction buries the camera
+   * inside whichever neighbour happens to be behind it — see focus.ts, which
+   * keeps this distance and only lifts the approach until the viewpoint is
+   * clear.
+   */
+  const { position: [px, py, pz] } = focusCameraPosition(
+    [target.x, target.y, target.z],
+    [direction.x, direction.y, direction.z],
+    distance,
+    cityData?.buildings ?? [],
+    { offsetX: cityOffsetX, offsetZ: cityOffsetZ },
+  );
   controls.target.copy(target);
-  camera.position.copy(target).addScaledVector(direction.lengthSq() > 0 ? direction : new THREE.Vector3(1, 0.7, 1).normalize(), distance);
+  camera.position.set(px, py, pz);
   camera.lookAt(target);
   controls.update();
 }
